@@ -7,11 +7,6 @@ oh delivers ~80% of key agent functionality
 Just 3% of the lines of code compared to Claude Code
 
 <p align="center">
-  <strong>Ultra-Lightweight of Claude Code<br>
-  <code>oh</code> delivers ~80% of key agent functionality with just 3% of the lines of code compared to Claude Code.</strong>
-</p>
-
-<p align="center">
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Quick_Start-5_min-blue?style=for-the-badge" alt="Quick Start"></a>
   <a href="#-harness-architecture"><img src="https://img.shields.io/badge/Harness-Architecture-ff69b4?style=for-the-badge" alt="Architecture"></a>
   <a href="#-features"><img src="https://img.shields.io/badge/Tools-43+-green?style=for-the-badge" alt="Tools"></a>
