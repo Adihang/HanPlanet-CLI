@@ -46,7 +46,7 @@ Supports CLI agent integration including OpenClaw, nanobot, Cursor, and more.
 <tr><td><strong>Tests</strong></td><td>—</td><td>114 unit + 6 E2E suites</td></tr>
 </table>
 
-**Just 2.3% of the code, 98% of the essential tools**. Leverages Python's power with pure focus on Harness architecture—stripped of enterprise overhead like telemetry, OAuth complexity, and hundreds of React components.
+Leverages Python's power with pure focus on Harness architecture—stripped of enterprise overhead like telemetry, OAuth complexity, and hundreds of React components.
 
 ---
 
