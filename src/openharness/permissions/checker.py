@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import fnmatch
+import logging
 from dataclasses import dataclass
 
 from openharness.config.settings import PermissionSettings
 from openharness.permissions.modes import PermissionMode
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -36,8 +39,13 @@ class PermissionChecker:
         for rule in getattr(settings, "path_rules", []):
             pattern = getattr(rule, "pattern", None) or (rule.get("pattern") if isinstance(rule, dict) else None)
             allow = getattr(rule, "allow", True) if not isinstance(rule, dict) else rule.get("allow", True)
-            if pattern:
-                self._path_rules.append(PathRule(pattern=pattern, allow=allow))
+            if isinstance(pattern, str) and pattern.strip():
+                self._path_rules.append(PathRule(pattern=pattern.strip(), allow=allow))
+            else:
+                log.warning(
+                    "Skipping path rule with missing, empty, or non-string 'pattern' field: %r",
+                    rule,
+                )
 
     def evaluate(
         self,
