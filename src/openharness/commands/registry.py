@@ -198,6 +198,35 @@ def _coerce_setting_value(settings: Settings, key: str, raw: str):
     return raw
 
 
+def _is_real_tty() -> bool:
+    """Return True when running in an interactive real terminal."""
+    import sys
+    return (
+        sys.stdin.isatty()
+        and sys.stdout.isatty()
+        and sys.stdin is sys.__stdin__
+        and sys.stdout is sys.__stdout__
+    )
+
+
+async def _qselect(prompt: str, choices: list, *, default=None):
+    """Run questionary.select in a thread and return the result."""
+    import asyncio
+    import questionary
+    def _run():
+        return questionary.select(prompt, choices=choices, default=default).ask()
+    return await asyncio.to_thread(_run)
+
+
+async def _qtext(prompt: str, *, default: str = "") -> str | None:
+    """Run questionary.text in a thread and return the result."""
+    import asyncio
+    import questionary
+    def _run():
+        return questionary.text(prompt, default=default).ask()
+    return await asyncio.to_thread(_run)
+
+
 def create_default_command_registry() -> CommandRegistry:
     """Create the built-in command registry."""
     registry = CommandRegistry()
@@ -321,39 +350,100 @@ def create_default_command_registry() -> CommandRegistry:
         )
 
     async def _memory_handler(args: str, context: CommandContext) -> CommandResult:
+        import asyncio
         tokens = args.split(maxsplit=1)
-        if not tokens:
-            memory_dir = get_project_memory_dir(context.cwd)
-            entrypoint = get_memory_entrypoint(context.cwd)
-            return CommandResult(
-                message=f"Memory directory: {memory_dir}\nEntrypoint: {entrypoint}"
-            )
-        action = tokens[0]
+        action = tokens[0] if tokens else ""
         rest = tokens[1] if len(tokens) == 2 else ""
-        if action == "list":
-            memory_files = list_memory_files(context.cwd)
-            if not memory_files:
-                return CommandResult(message="No memory files.")
-            return CommandResult(message="\n".join(path.name for path in memory_files))
-        if action == "show" and rest:
-            memory_dir = get_project_memory_dir(context.cwd)
-            path = memory_dir / rest
-            if not path.exists():
-                path = memory_dir / f"{rest}.md"
-            if not path.exists():
-                return CommandResult(message=f"Memory entry not found: {rest}")
-            return CommandResult(message=path.read_text(encoding="utf-8"))
-        if action == "add" and rest:
-            title, separator, content = rest.partition("::")
-            if not separator or not title.strip() or not content.strip():
-                return CommandResult(message="Usage: /memory add TITLE :: CONTENT")
-            path = add_memory_entry(context.cwd, title.strip(), content.strip())
-            return CommandResult(message=f"Added memory entry {path.name}")
-        if action == "remove" and rest:
-            if remove_memory_entry(context.cwd, rest.strip()):
-                return CommandResult(message=f"Removed memory entry {rest.strip()}")
-            return CommandResult(message=f"Memory entry not found: {rest.strip()}")
-        return CommandResult(message="Usage: /memory [list|show NAME|add TITLE :: CONTENT|remove NAME]")
+
+        # Direct commands with args pass through immediately
+        if action in ("list", "show", "add", "remove") and (action == "list" or rest):
+            if action == "list":
+                memory_files = list_memory_files(context.cwd)
+                if not memory_files:
+                    return CommandResult(message="No memory files.")
+                return CommandResult(message="\n".join(path.name for path in memory_files))
+            if action == "show":
+                memory_dir = get_project_memory_dir(context.cwd)
+                path = memory_dir / rest
+                if not path.exists():
+                    path = memory_dir / f"{rest}.md"
+                if not path.exists():
+                    return CommandResult(message=f"Memory entry not found: {rest}")
+                return CommandResult(message=path.read_text(encoding="utf-8"))
+            if action == "add":
+                title, separator, content = rest.partition("::")
+                if not separator or not title.strip() or not content.strip():
+                    return CommandResult(message="Usage: /memory add TITLE :: CONTENT")
+                path = add_memory_entry(context.cwd, title.strip(), content.strip())
+                return CommandResult(message=f"Added memory entry {path.name}")
+            if action == "remove":
+                if remove_memory_entry(context.cwd, rest.strip()):
+                    return CommandResult(message=f"Removed memory entry {rest.strip()}")
+                return CommandResult(message=f"Memory entry not found: {rest.strip()}")
+
+        # Interactive menu
+        if _is_real_tty():
+            try:
+                import questionary
+                memory_dir = get_project_memory_dir(context.cwd)
+                memory_files = list_memory_files(context.cwd)
+                file_names = [f.name for f in memory_files]
+
+                choices = [
+                    questionary.Choice("📋 목록 보기 (list)", "list"),
+                    questionary.Choice("👁  내용 보기 (show)", "show"),
+                    questionary.Choice("➕ 항목 추가 (add)", "add"),
+                    questionary.Choice("🗑  항목 삭제 (remove)", "remove"),
+                ]
+                selected = await _qselect("메모리 작업 선택:", choices)
+                if selected is None:
+                    return CommandResult(message="취소됐습니다.")
+
+                if selected == "list":
+                    if not file_names:
+                        return CommandResult(message="No memory files.")
+                    return CommandResult(message="\n".join(file_names))
+
+                if selected == "show":
+                    if not file_names:
+                        return CommandResult(message="메모리 파일이 없습니다.")
+                    name = await _qselect("파일 선택:", [questionary.Choice(n, n) for n in file_names])
+                    if name is None:
+                        return CommandResult(message="취소됐습니다.")
+                    path = memory_dir / name
+                    return CommandResult(message=path.read_text(encoding="utf-8"))
+
+                if selected == "add":
+                    title = await _qtext("제목 입력:")
+                    if not title or not title.strip():
+                        return CommandResult(message="취소됐습니다.")
+                    content = await _qtext("내용 입력:")
+                    if not content or not content.strip():
+                        return CommandResult(message="취소됐습니다.")
+                    path = add_memory_entry(context.cwd, title.strip(), content.strip())
+                    return CommandResult(message=f"Added memory entry {path.name}")
+
+                if selected == "remove":
+                    if not file_names:
+                        return CommandResult(message="메모리 파일이 없습니다.")
+                    name = await _qselect("삭제할 파일 선택:", [questionary.Choice(n, n) for n in file_names])
+                    if name is None:
+                        return CommandResult(message="취소됐습니다.")
+                    if remove_memory_entry(context.cwd, name):
+                        return CommandResult(message=f"Removed memory entry {name}")
+                    return CommandResult(message=f"Memory entry not found: {name}")
+
+            except ImportError:
+                pass
+
+        memory_dir = get_project_memory_dir(context.cwd)
+        entrypoint = get_memory_entrypoint(context.cwd)
+        return CommandResult(
+            message=(
+                f"Memory directory: {memory_dir}\nEntrypoint: {entrypoint}\n"
+                "Usage: /memory [list|show NAME|add TITLE :: CONTENT|remove NAME]"
+            )
+        )
 
     async def _hooks_handler(_: str, context: CommandContext) -> CommandResult:
         return CommandResult(message=context.hooks_summary or "No hooks configured.")
@@ -911,85 +1001,175 @@ def create_default_command_registry() -> CommandRegistry:
             if context.app_state is not None
             else settings.fast_mode
         )
-        action = args.strip() or "show"
-        if action == "show":
-            return CommandResult(message=f"Fast mode: {'on' if current else 'off'}")
-        enabled = {"on": True, "off": False, "toggle": not current}.get(action)
-        if enabled is None:
-            return CommandResult(message="Usage: /fast [show|on|off|toggle]")
-        settings.fast_mode = enabled
-        save_settings(settings)
-        if context.app_state is not None:
-            context.app_state.set(fast_mode=enabled)
-        return CommandResult(message=f"Fast mode {'enabled' if enabled else 'disabled'}.")
+        action = args.strip()
+        if action:
+            if action == "show":
+                return CommandResult(message=f"Fast mode: {'on' if current else 'off'}")
+            enabled = {"on": True, "off": False, "toggle": not current}.get(action)
+            if enabled is None:
+                return CommandResult(message="Usage: /fast [show|on|off|toggle]")
+            settings.fast_mode = enabled
+            save_settings(settings)
+            if context.app_state is not None:
+                context.app_state.set(fast_mode=enabled)
+            return CommandResult(message=f"Fast mode {'enabled' if enabled else 'disabled'}.")
+
+        if _is_real_tty():
+            try:
+                import questionary
+                state_label = "켜짐 (on)" if current else "꺼짐 (off)"
+                choices = [
+                    questionary.Choice("🚀 켜기 (on)", "on"),
+                    questionary.Choice("💤 끄기 (off)", "off"),
+                ]
+                selected = await _qselect(f"Fast mode (현재: {state_label}):", choices, default="on" if current else "off")
+                if selected is None:
+                    return CommandResult(message="취소됐습니다.")
+                enabled = selected == "on"
+                settings.fast_mode = enabled
+                save_settings(settings)
+                if context.app_state is not None:
+                    context.app_state.set(fast_mode=enabled)
+                return CommandResult(message=f"Fast mode {'enabled' if enabled else 'disabled'}.", refresh_runtime=True)
+            except ImportError:
+                pass
+        return CommandResult(message=f"Fast mode: {'on' if current else 'off'}\nUsage: /fast [on|off|toggle]")
 
     async def _effort_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
         current = context.app_state.get().effort if context.app_state is not None else settings.effort
-        value = args.strip() or "show"
-        if value == "show":
-            return CommandResult(message=f"Reasoning effort: {current}")
-        if value not in {"low", "medium", "high"}:
-            return CommandResult(message="Usage: /effort [show|low|medium|high]")
-        settings.effort = value
-        save_settings(settings)
-        context.engine.set_system_prompt(build_runtime_system_prompt(settings, cwd=context.cwd))
-        if context.app_state is not None:
-            context.app_state.set(effort=value)
-        return CommandResult(message=f"Reasoning effort set to {value}.")
+        value = args.strip()
+        if value:
+            if value == "show":
+                return CommandResult(message=f"Reasoning effort: {current}")
+            if value not in {"low", "medium", "high"}:
+                return CommandResult(message="Usage: /effort [show|low|medium|high]")
+            settings.effort = value
+            save_settings(settings)
+            context.engine.set_system_prompt(build_runtime_system_prompt(settings, cwd=context.cwd))
+            if context.app_state is not None:
+                context.app_state.set(effort=value)
+            return CommandResult(message=f"Reasoning effort set to {value}.")
+
+        if _is_real_tty():
+            try:
+                import questionary
+                choices = [
+                    questionary.Choice("⚡ low    — 빠른 응답, 얕은 추론", "low"),
+                    questionary.Choice("⚖️  medium — 균형 (기본값)", "medium"),
+                    questionary.Choice("🔬 high   — 깊은 추론, 느린 응답", "high"),
+                ]
+                selected = await _qselect(f"추론 깊이 선택 (현재: {current}):", choices, default=current)
+                if selected is None:
+                    return CommandResult(message="취소됐습니다.")
+                settings.effort = selected
+                save_settings(settings)
+                context.engine.set_system_prompt(build_runtime_system_prompt(settings, cwd=context.cwd))
+                if context.app_state is not None:
+                    context.app_state.set(effort=selected)
+                return CommandResult(message=f"Reasoning effort set to {selected}.", refresh_runtime=True)
+            except ImportError:
+                pass
+        return CommandResult(message=f"Reasoning effort: {current}\nUsage: /effort [low|medium|high]")
 
     async def _passes_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
         current = context.app_state.get().passes if context.app_state is not None else settings.passes
-        value = args.strip() or "show"
-        if value == "show":
-            return CommandResult(message=f"Passes: {current}")
-        try:
-            passes = max(1, min(int(value), 8))
-        except ValueError:
-            return CommandResult(message="Usage: /passes [show|COUNT]")
-        settings.passes = passes
-        save_settings(settings)
-        context.engine.set_system_prompt(build_runtime_system_prompt(settings, cwd=context.cwd))
-        if context.app_state is not None:
-            context.app_state.set(passes=passes)
-        return CommandResult(message=f"Pass count set to {passes}.")
+        value = args.strip()
+        if value and value != "show":
+            try:
+                passes = max(1, min(int(value), 8))
+            except ValueError:
+                return CommandResult(message="Usage: /passes [show|COUNT]")
+            settings.passes = passes
+            save_settings(settings)
+            context.engine.set_system_prompt(build_runtime_system_prompt(settings, cwd=context.cwd))
+            if context.app_state is not None:
+                context.app_state.set(passes=passes)
+            return CommandResult(message=f"Pass count set to {passes}.")
+
+        if _is_real_tty():
+            try:
+                import questionary
+                choices = [questionary.Choice(str(i), i) for i in range(1, 9)]
+                selected = await _qselect(f"패스 수 선택 (현재: {current}):", choices, default=current)
+                if selected is None:
+                    return CommandResult(message="취소됐습니다.")
+                settings.passes = selected
+                save_settings(settings)
+                context.engine.set_system_prompt(build_runtime_system_prompt(settings, cwd=context.cwd))
+                if context.app_state is not None:
+                    context.app_state.set(passes=selected)
+                return CommandResult(message=f"Pass count set to {selected}.", refresh_runtime=True)
+            except ImportError:
+                pass
+        return CommandResult(message=f"Passes: {current}\nUsage: /passes [COUNT]")
 
     async def _turns_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
         engine_turns = "unlimited" if context.engine.max_turns is None else str(context.engine.max_turns)
         tokens = args.split()
-        if not tokens or tokens[0] == "show":
-            return CommandResult(
-                message=(
-                    f"Max turns (engine): {engine_turns}\n"
-                    f"Max turns (config): {settings.max_turns}\n"
-                    "Usage: /turns [show|unlimited|COUNT]"
+        if tokens and tokens[0] != "show":
+            if tokens[0] == "set" and len(tokens) == 2:
+                raw = tokens[1]
+            elif len(tokens) == 1:
+                raw = tokens[0]
+            else:
+                return CommandResult(message="Usage: /turns [show|unlimited|COUNT]")
+            if raw.lower() == "unlimited":
+                context.engine.set_max_turns(None)
+                return CommandResult(
+                    message=(
+                        "Max turns set to unlimited for this session. "
+                        f"Saved config remains {settings.max_turns}."
+                    )
                 )
-            )
-        if tokens[0] == "set" and len(tokens) == 2:
-            raw = tokens[1]
-        elif len(tokens) == 1:
-            raw = tokens[0]
-        else:
-            return CommandResult(message="Usage: /turns [show|unlimited|COUNT]")
-        if raw.lower() == "unlimited":
-            context.engine.set_max_turns(None)
-            return CommandResult(
-                message=(
-                    "Max turns set to unlimited for this session. "
-                    f"Saved config remains {settings.max_turns}."
+            try:
+                turns = int(raw)
+            except ValueError:
+                return CommandResult(message="Usage: /turns [show|unlimited|COUNT]")
+            turns = max(1, min(turns, 512))
+            settings.max_turns = turns
+            save_settings(settings)
+            context.engine.set_max_turns(turns)
+            return CommandResult(message=f"Max turns set to {turns}.")
+
+        if _is_real_tty():
+            try:
+                presets = ["10", "50", "100", "200", "500", "unlimited"]
+                import questionary
+                choices = [questionary.Choice(p, p) for p in presets] + [
+                    questionary.Choice("✏️  직접 입력...", "__custom__")
+                ]
+                selected = await _qselect(
+                    f"최대 턴 수 선택 (현재: {engine_turns}):", choices, default=engine_turns if engine_turns in presets else None
                 )
+                if selected is None:
+                    return CommandResult(message="취소됐습니다.")
+                if selected == "__custom__":
+                    selected = await _qtext("턴 수 입력:", default=str(settings.max_turns))
+                    if selected is None:
+                        return CommandResult(message="취소됐습니다.")
+                if selected.lower() == "unlimited":
+                    context.engine.set_max_turns(None)
+                    return CommandResult(message="Max turns set to unlimited for this session.", refresh_runtime=True)
+                try:
+                    turns = max(1, min(int(selected), 512))
+                except ValueError:
+                    return CommandResult(message="숫자를 입력해주세요.")
+                settings.max_turns = turns
+                save_settings(settings)
+                context.engine.set_max_turns(turns)
+                return CommandResult(message=f"Max turns set to {turns}.", refresh_runtime=True)
+            except ImportError:
+                pass
+        return CommandResult(
+            message=(
+                f"Max turns (engine): {engine_turns}\n"
+                f"Max turns (config): {settings.max_turns}\n"
+                "Usage: /turns [show|unlimited|COUNT]"
             )
-        try:
-            turns = int(raw)
-        except ValueError:
-            return CommandResult(message="Usage: /turns [show|unlimited|COUNT]")
-        turns = max(1, min(turns, 512))
-        settings.max_turns = turns
-        save_settings(settings)
-        context.engine.set_max_turns(turns)
-        return CommandResult(message=f"Max turns set to {turns}.")
+        )
 
     async def _continue_handler(args: str, context: CommandContext) -> CommandResult:
         raw = args.strip()
@@ -1117,27 +1297,80 @@ def create_default_command_registry() -> CommandRegistry:
     async def _plugin_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
         tokens = args.split()
-        if not tokens or tokens[0] == "list":
-            return CommandResult(message=context.plugin_summary or "No plugins discovered.")
-        if tokens[0] == "enable" and len(tokens) == 2:
-            settings.enabled_plugins[tokens[1]] = True
-            save_settings(settings)
-            return CommandResult(message=f"Enabled plugin '{tokens[1]}'. Restart session to reload.")
-        if tokens[0] == "disable" and len(tokens) == 2:
-            settings.enabled_plugins[tokens[1]] = False
-            save_settings(settings)
-            return CommandResult(message=f"Disabled plugin '{tokens[1]}'. Restart session to reload.")
-        if tokens[0] == "install" and len(tokens) == 2:
-            path = install_plugin_from_path(tokens[1])
-            return CommandResult(message=f"Installed plugin to {path}")
-        if tokens[0] == "uninstall" and len(tokens) == 2:
-            if uninstall_plugin(tokens[1]):
-                return CommandResult(message=f"Uninstalled plugin '{tokens[1]}'")
-            return CommandResult(message=f"Plugin '{tokens[1]}' not found")
-        plugins = load_plugins(settings, context.cwd)
-        if plugins:
-            return CommandResult(message=context.plugin_summary)
-        return CommandResult(message="Usage: /plugin [list|enable NAME|disable NAME|install PATH|uninstall NAME]")
+
+        # Direct commands pass through
+        if tokens and tokens[0] != "menu":
+            if tokens[0] == "list":
+                return CommandResult(message=context.plugin_summary or "No plugins discovered.")
+            if tokens[0] == "enable" and len(tokens) == 2:
+                settings.enabled_plugins[tokens[1]] = True
+                save_settings(settings)
+                return CommandResult(message=f"Enabled plugin '{tokens[1]}'. Restart session to reload.")
+            if tokens[0] == "disable" and len(tokens) == 2:
+                settings.enabled_plugins[tokens[1]] = False
+                save_settings(settings)
+                return CommandResult(message=f"Disabled plugin '{tokens[1]}'. Restart session to reload.")
+            if tokens[0] == "install" and len(tokens) == 2:
+                path = install_plugin_from_path(tokens[1])
+                return CommandResult(message=f"Installed plugin to {path}")
+            if tokens[0] == "uninstall" and len(tokens) == 2:
+                if uninstall_plugin(tokens[1]):
+                    return CommandResult(message=f"Uninstalled plugin '{tokens[1]}'")
+                return CommandResult(message=f"Plugin '{tokens[1]}' not found")
+
+        # Interactive menu
+        if _is_real_tty():
+            try:
+                import questionary
+                plugins = load_plugins(settings, context.cwd)
+                plugin_names = [p.name for p in plugins]
+
+                choices = [
+                    questionary.Choice("📋 목록 보기 (list)", "list"),
+                    questionary.Choice("✅ 플러그인 활성화 (enable)", "enable"),
+                    questionary.Choice("🚫 플러그인 비활성화 (disable)", "disable"),
+                    questionary.Choice("📥 설치 (install)", "install"),
+                    questionary.Choice("🗑  제거 (uninstall)", "uninstall"),
+                ]
+                action = await _qselect("플러그인 작업 선택:", choices)
+                if action is None:
+                    return CommandResult(message="취소됐습니다.")
+
+                if action == "list":
+                    return CommandResult(message=context.plugin_summary or "No plugins discovered.")
+
+                if action in ("enable", "disable") and plugin_names:
+                    name = await _qselect(
+                        f"{'활성화' if action == 'enable' else '비활성화'}할 플러그인:",
+                        [questionary.Choice(n, n) for n in plugin_names],
+                    )
+                    if name is None:
+                        return CommandResult(message="취소됐습니다.")
+                    settings.enabled_plugins[name] = (action == "enable")
+                    save_settings(settings)
+                    verb = "Enabled" if action == "enable" else "Disabled"
+                    return CommandResult(message=f"{verb} plugin '{name}'. Restart session to reload.")
+
+                if action == "install":
+                    path_str = await _qtext("설치할 플러그인 경로 입력:")
+                    if not path_str or not path_str.strip():
+                        return CommandResult(message="취소됐습니다.")
+                    path = install_plugin_from_path(path_str.strip())
+                    return CommandResult(message=f"Installed plugin to {path}")
+
+                if action == "uninstall" and plugin_names:
+                    name = await _qselect("제거할 플러그인:", [questionary.Choice(n, n) for n in plugin_names])
+                    if name is None:
+                        return CommandResult(message="취소됐습니다.")
+                    if uninstall_plugin(name):
+                        return CommandResult(message=f"Uninstalled plugin '{name}'")
+                    return CommandResult(message=f"Plugin '{name}' not found")
+
+                return CommandResult(message=context.plugin_summary or "No plugins discovered.")
+            except ImportError:
+                pass
+
+        return CommandResult(message=context.plugin_summary or "Usage: /plugin [list|enable NAME|disable NAME|install PATH|uninstall NAME]")
 
     _MODE_LABELS = {"default": "Default", "plan": "Plan Mode", "full_auto": "Auto"}
 
@@ -1240,73 +1473,120 @@ def create_default_command_registry() -> CommandRegistry:
         active_profile = manager.get_active_profile()
         _, profile = settings.resolve_profile(active_profile)
         tokens = args.split(maxsplit=1)
-        if not tokens or tokens[0] == "show":
-            return CommandResult(message=f"Model: {display_model_setting(profile)}\nProfile: {active_profile}")
-        if tokens[0] == "set" and len(tokens) == 2:
-            model_name = tokens[1].strip()
-        elif args.strip():
-            model_name = args.strip()
-        else:
-            model_name = None
-        if model_name:
+
+        def _apply_model(model_name: str):
             if profile.allowed_models and model_name.lower() != "default" and model_name not in profile.allowed_models:
                 allowed = ", ".join(profile.allowed_models)
-                return CommandResult(message=f"Model '{model_name}' is not allowed for profile '{active_profile}'. Allowed models: {allowed}")
+                return CommandResult(message=f"Model '{model_name}' is not allowed for profile '{active_profile}'. Allowed: {allowed}")
             if model_name.lower() == "default":
                 manager.update_profile(active_profile, last_model="")
-                message = "Model reset to default."
+                msg = "Model reset to default."
             else:
                 manager.update_profile(active_profile, last_model=model_name)
-                message = f"Model set to {model_name}."
+                msg = f"Model set to {model_name}."
             updated = load_settings()
             context.engine.set_model(updated.model)
             if context.app_state is not None:
-                updated_profile = updated.resolve_profile()[1]
-                context.app_state.set(model=display_model_setting(updated_profile))
-            return CommandResult(message=message, refresh_runtime=True)
-        return CommandResult(message="Usage: /model [show|MODEL]")
+                context.app_state.set(model=display_model_setting(updated.resolve_profile()[1]))
+            return CommandResult(message=msg, refresh_runtime=True)
+
+        if tokens and tokens[0] != "show":
+            if tokens[0] == "set" and len(tokens) == 2:
+                return _apply_model(tokens[1].strip())
+            if args.strip():
+                return _apply_model(args.strip())
+
+        if _is_real_tty():
+            try:
+                import questionary
+                current = display_model_setting(profile)
+                if profile.allowed_models:
+                    choices = [questionary.Choice(m, m) for m in profile.allowed_models]
+                    choices.append(questionary.Choice("✏️  직접 입력...", "__custom__"))
+                    selected = await _qselect(f"모델 선택 (현재: {current}):", choices, default=current if current in profile.allowed_models else None)
+                else:
+                    selected = "__custom__"
+                if selected is None:
+                    return CommandResult(message="취소됐습니다.")
+                if selected == "__custom__":
+                    selected = await _qtext("모델명 입력:", default=current)
+                    if not selected or not selected.strip():
+                        return CommandResult(message="취소됐습니다.")
+                return _apply_model(selected.strip())
+            except ImportError:
+                pass
+        return CommandResult(message=f"Model: {display_model_setting(profile)}\nProfile: {active_profile}\nUsage: /model [show|MODEL]")
 
     async def _provider_handler(args: str, context: CommandContext) -> CommandResult:
         manager = AuthManager()
         profiles = manager.get_profile_statuses()
         tokens = args.split()
-        if not tokens or tokens[0] == "show":
-            active_name = manager.get_active_profile()
-            active = profiles[active_name]
-            lines = [
-                f"Active profile: {active_name}",
-                f"Label: {active['label']}",
-                f"Provider: {active['provider']}",
-                f"Auth source: {active['auth_source']}",
-                f"Configured: {'yes' if active['configured'] else 'no'}",
-                f"Base URL: {active['base_url'] or '(default)'}",
-                f"Model: {active['model']}",
-            ]
-            return CommandResult(message="\n".join(lines))
-        if tokens[0] == "list":
-            lines = ["Provider profiles:"]
-            for name, info in profiles.items():
-                marker = "*" if info["active"] else " "
-                configured = "configured" if info["configured"] else "missing auth"
-                lines.append(f"{marker} {name} [{configured}] {info['label']} -> {info['model']}")
-            return CommandResult(message="\n".join(lines))
-        target = tokens[1] if tokens[0] == "use" and len(tokens) == 2 else (tokens[0] if len(tokens) == 1 else None)
-        if target is None:
-            return CommandResult(message="Usage: /provider [show|list|PROFILE]")
-        manager.use_profile(target)
-        updated = load_settings()
-        profile = updated.resolve_profile()[1]
-        context.engine.set_model(updated.model)
-        if context.app_state is not None:
-            context.app_state.set(
-                model=display_model_setting(profile),
-                provider=detect_provider(updated).name,
-                auth_status=auth_status(updated),
-                base_url=updated.base_url or "",
-            )
+
+        def _switch_to(target: str):
+            if target not in profiles:
+                return CommandResult(message=f"Unknown profile: {target}")
+            manager.use_profile(target)
+            updated = load_settings()
+            profile = updated.resolve_profile()[1]
+            context.engine.set_model(updated.model)
+            if context.app_state is not None:
+                context.app_state.set(
+                    model=display_model_setting(profile),
+                    provider=detect_provider(updated).name,
+                    auth_status=auth_status(updated),
+                    base_url=updated.base_url or "",
+                )
+            return CommandResult(message=f"Switched to {target} ({profile.label}).", refresh_runtime=True)
+
+        if tokens:
+            if tokens[0] == "show":
+                active_name = manager.get_active_profile()
+                active = profiles[active_name]
+                lines = [
+                    f"Active profile: {active_name}",
+                    f"Label: {active['label']}",
+                    f"Provider: {active['provider']}",
+                    f"Configured: {'yes' if active['configured'] else 'no'}",
+                    f"Base URL: {active['base_url'] or '(default)'}",
+                    f"Model: {active['model']}",
+                ]
+                return CommandResult(message="\n".join(lines))
+            if tokens[0] == "list":
+                lines = ["Provider profiles:"]
+                for name, info in profiles.items():
+                    marker = "*" if info["active"] else " "
+                    configured = "configured" if info["configured"] else "missing auth"
+                    lines.append(f"{marker} {name} [{configured}] {info['label']} -> {info['model']}")
+                return CommandResult(message="\n".join(lines))
+            target = tokens[1] if tokens[0] == "use" and len(tokens) == 2 else tokens[0]
+            return _switch_to(target)
+
+        if _is_real_tty():
+            try:
+                import questionary
+                active_name = manager.get_active_profile()
+                choices = []
+                for name, info in profiles.items():
+                    configured = "✅" if info["configured"] else "❌"
+                    active_mark = " (현재)" if name == active_name else ""
+                    title = f"{configured} {info['label']}{active_mark}  [{info['model']}]"
+                    choices.append(questionary.Choice(title=title, value=name))
+                selected = await _qselect("프로바이더 프로필 선택:", choices, default=active_name)
+                if selected is None:
+                    return CommandResult(message="취소됐습니다.")
+                if selected == active_name:
+                    return CommandResult(message=f"이미 {active_name} 프로파일을 사용 중입니다.")
+                return _switch_to(selected)
+            except ImportError:
+                pass
+
+        active_name = manager.get_active_profile()
+        active = profiles[active_name]
         return CommandResult(
-            message=f"Switched provider profile to {target} ({profile.label}).",
-            refresh_runtime=True,
+            message=(
+                f"Active: {active_name} ({active['label']})\n"
+                "Usage: /provider [show|list|PROFILE]"
+            )
         )
 
     async def _theme_handler(args: str, context: CommandContext) -> CommandResult:
@@ -1320,78 +1600,70 @@ def create_default_command_registry() -> CommandRegistry:
             else settings.theme
         )
 
-        if not tokens or tokens[0] == "show":
-            try:
-                theme = load_theme(current)
-                lines = [
-                    f"Theme: {theme.name}",
-                    f"  Colors:  primary={theme.colors.primary}  secondary={theme.colors.secondary}"
-                    f"  accent={theme.colors.accent}  error={theme.colors.error}"
-                    f"  muted={theme.colors.muted}",
-                    f"           background={theme.colors.background}  foreground={theme.colors.foreground}",
-                    f"  Borders: style={theme.borders.style}",
-                    f"  Icons:   spinner={theme.icons.spinner}  tool={theme.icons.tool}"
-                    f"  error={theme.icons.error}  success={theme.icons.success}"
-                    f"  agent={theme.icons.agent}",
-                    f"  Layout:  compact={theme.layout.compact}"
-                    f"  show_tokens={theme.layout.show_tokens}"
-                    f"  show_time={theme.layout.show_time}",
-                ]
-                return CommandResult(message="\n".join(lines))
-            except KeyError:
-                return CommandResult(message=f"Theme: {current} (not found)")
-
-        if tokens[0] == "list":
-            available = list_themes()
-            lines = [f"{'*' if name == current else ' '} {name}" for name in available]
-            return CommandResult(message="\n".join(lines))
-
-        if tokens[0] == "set" and len(tokens) == 2:
-            name = tokens[1]
-        elif len(tokens) == 1 and tokens[0] not in {"list", "preview"}:
-            name = tokens[0]
-        else:
-            name = None
-        if name is not None:
+        def _apply_theme(name: str):
             try:
                 load_theme(name)
             except KeyError:
                 available = list_themes()
-                return CommandResult(
-                    message=f"Unknown theme: {name!r}. Available: {', '.join(available)}"
-                )
+                return CommandResult(message=f"Unknown theme: {name!r}. Available: {', '.join(available)}")
             settings.theme = name
             save_settings(settings)
             if context.app_state is not None:
                 context.app_state.set(theme=name)
-            return CommandResult(message=f"Theme set to {name}")
+            return CommandResult(message=f"Theme set to {name}", refresh_runtime=True)
 
-        if tokens[0] == "preview" and len(tokens) == 2:
-            name = tokens[1]
-            try:
-                theme = load_theme(name)
-            except KeyError:
+        if tokens:
+            if tokens[0] == "show":
+                try:
+                    theme = load_theme(current)
+                    lines = [
+                        f"Theme: {theme.name}",
+                        f"  Colors:  primary={theme.colors.primary}  secondary={theme.colors.secondary}"
+                        f"  accent={theme.colors.accent}  error={theme.colors.error}  muted={theme.colors.muted}",
+                        f"           background={theme.colors.background}  foreground={theme.colors.foreground}",
+                        f"  Borders: style={theme.borders.style}",
+                        f"  Icons:   spinner={theme.icons.spinner}  tool={theme.icons.tool}"
+                        f"  error={theme.icons.error}  success={theme.icons.success}  agent={theme.icons.agent}",
+                        f"  Layout:  compact={theme.layout.compact}"
+                        f"  show_tokens={theme.layout.show_tokens}  show_time={theme.layout.show_time}",
+                    ]
+                    return CommandResult(message="\n".join(lines))
+                except KeyError:
+                    return CommandResult(message=f"Theme: {current} (not found)")
+            if tokens[0] == "list":
                 available = list_themes()
-                return CommandResult(
-                    message=f"Unknown theme: {name!r}. Available: {', '.join(available)}"
-                )
-            lines = [
-                f"Preview: {theme.name}",
-                f"  primary    {theme.colors.primary}",
-                f"  secondary  {theme.colors.secondary}",
-                f"  accent     {theme.colors.accent}",
-                f"  error      {theme.colors.error}",
-                f"  muted      {theme.colors.muted}",
-                f"  background {theme.colors.background}",
-                f"  foreground {theme.colors.foreground}",
-                f"  borders    {theme.borders.style}",
-                f"  icons      spinner={theme.icons.spinner} tool={theme.icons.tool}"
-                f" success={theme.icons.success} error={theme.icons.error}"
-                f" agent={theme.icons.agent}",
-            ]
-            return CommandResult(message="\n".join(lines))
+                lines = [f"{'*' if name == current else ' '} {name}" for name in available]
+                return CommandResult(message="\n".join(lines))
+            if tokens[0] == "preview" and len(tokens) == 2:
+                try:
+                    theme = load_theme(tokens[1])
+                except KeyError:
+                    return CommandResult(message=f"Unknown theme: {tokens[1]!r}. Available: {', '.join(list_themes())}")
+                lines = [f"Preview: {theme.name}", f"  primary={theme.colors.primary}  secondary={theme.colors.secondary}  accent={theme.colors.accent}"]
+                return CommandResult(message="\n".join(lines))
+            if tokens[0] == "set" and len(tokens) == 2:
+                return _apply_theme(tokens[1])
+            if tokens[0] not in {"list", "preview", "show"}:
+                return _apply_theme(tokens[0])
 
-        return CommandResult(message="Usage: /theme [list|show|NAME|preview NAME]")
+        if _is_real_tty():
+            try:
+                import questionary
+                available = list_themes()
+                choices = [
+                    questionary.Choice(f"{'*' if n == current else ' '} {n}", n)
+                    for n in available
+                ]
+                selected = await _qselect(f"테마 선택 (현재: {current}):", choices, default=current if current in available else None)
+                if selected is None:
+                    return CommandResult(message="취소됐습니다.")
+                return _apply_theme(selected)
+            except ImportError:
+                pass
+
+        available = list_themes()
+        lines = [f"{'*' if name == current else ' '} {name}" for name in available]
+        return CommandResult(message="\n".join(lines) + "\nUsage: /theme [list|show|NAME|preview NAME]")
 
     async def _output_style_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1403,27 +1675,41 @@ def create_default_command_registry() -> CommandRegistry:
             if context.app_state is not None
             else settings.output_style
         )
-        if not tokens or tokens[0] == "show":
-            return CommandResult(message=f"Output style: {current}")
-        if tokens[0] == "list":
-            return CommandResult(
-                message="\n".join(f"{style.name} [{style.source}]" for style in styles)
-            )
-        if tokens[0] == "set" and len(tokens) == 2:
-            style_name = tokens[1]
-        elif len(tokens) == 1 and tokens[0] not in {"list"}:
-            style_name = tokens[0]
-        else:
-            style_name = None
-        if style_name is not None:
+
+        def _apply_style(style_name: str):
             if style_name not in available:
                 return CommandResult(message=f"Unknown output style: {style_name}")
             settings.output_style = style_name
             save_settings(settings)
             if context.app_state is not None:
                 context.app_state.set(output_style=style_name)
-            return CommandResult(message=f"Output style set to {style_name}")
-        return CommandResult(message="Usage: /output-style [show|list|NAME]")
+            return CommandResult(message=f"Output style set to {style_name}", refresh_runtime=True)
+
+        if tokens:
+            if tokens[0] == "show":
+                return CommandResult(message=f"Output style: {current}")
+            if tokens[0] == "list":
+                return CommandResult(message="\n".join(f"{'*' if style.name == current else ' '} {style.name} [{style.source}]" for style in styles))
+            if tokens[0] == "set" and len(tokens) == 2:
+                return _apply_style(tokens[1])
+            if tokens[0] not in {"list", "show"}:
+                return _apply_style(tokens[0])
+
+        if _is_real_tty():
+            try:
+                import questionary
+                choices = [
+                    questionary.Choice(f"{'*' if style.name == current else ' '} {style.name}  [{style.source}]", style.name)
+                    for style in styles
+                ]
+                selected = await _qselect(f"출력 스타일 선택 (현재: {current}):", choices, default=current if current in available else None)
+                if selected is None:
+                    return CommandResult(message="취소됐습니다.")
+                return _apply_style(selected)
+            except ImportError:
+                pass
+
+        return CommandResult(message=f"Output style: {current}\nUsage: /output-style [show|list|NAME]")
 
     async def _keybindings_handler(_: str, context: CommandContext) -> CommandResult:
         from openharness.keybindings import get_keybindings_path, load_keybindings
@@ -1444,17 +1730,39 @@ def create_default_command_registry() -> CommandRegistry:
             if context.app_state is not None
             else settings.vim_mode
         )
-        action = args.strip() or "show"
-        if action == "show":
-            return CommandResult(message=f"Vim mode: {'on' if current else 'off'}")
-        enabled = {"on": True, "off": False, "toggle": not current}.get(action)
-        if enabled is None:
-            return CommandResult(message="Usage: /vim [show|on|off|toggle]")
-        settings.vim_mode = enabled
-        save_settings(settings)
-        if context.app_state is not None:
-            context.app_state.set(vim_enabled=enabled)
-        return CommandResult(message=f"Vim mode {'enabled' if enabled else 'disabled'}.")
+        action = args.strip()
+        if action:
+            if action == "show":
+                return CommandResult(message=f"Vim mode: {'on' if current else 'off'}")
+            enabled = {"on": True, "off": False, "toggle": not current}.get(action)
+            if enabled is None:
+                return CommandResult(message="Usage: /vim [show|on|off|toggle]")
+            settings.vim_mode = enabled
+            save_settings(settings)
+            if context.app_state is not None:
+                context.app_state.set(vim_enabled=enabled)
+            return CommandResult(message=f"Vim mode {'enabled' if enabled else 'disabled'}.")
+
+        if _is_real_tty():
+            try:
+                import questionary
+                state_label = "켜짐 (on)" if current else "꺼짐 (off)"
+                choices = [
+                    questionary.Choice("⌨️  켜기 (on)", "on"),
+                    questionary.Choice("🖱  끄기 (off)", "off"),
+                ]
+                selected = await _qselect(f"Vim 모드 (현재: {state_label}):", choices, default="on" if current else "off")
+                if selected is None:
+                    return CommandResult(message="취소됐습니다.")
+                enabled = selected == "on"
+                settings.vim_mode = enabled
+                save_settings(settings)
+                if context.app_state is not None:
+                    context.app_state.set(vim_enabled=enabled)
+                return CommandResult(message=f"Vim mode {'enabled' if enabled else 'disabled'}.", refresh_runtime=True)
+            except ImportError:
+                pass
+        return CommandResult(message=f"Vim mode: {'on' if current else 'off'}\nUsage: /vim [on|off|toggle]")
 
     async def _voice_handler(args: str, context: CommandContext) -> CommandResult:
         from openharness.voice import extract_keyterms, inspect_voice_capabilities
