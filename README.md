@@ -289,7 +289,7 @@ ollama pull gemma4
 ```bash
 oh setup
 # → Choose "Ollama / Local"
-# → Enter base URL (default: http://localhost:11434)
+# → Enter base URL (default: http://localhost:11434/v1)
 # → Enter model name (e.g. llama3.2, gemma4, qwen2.5-coder)
 ```
 

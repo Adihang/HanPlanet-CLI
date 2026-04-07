@@ -528,8 +528,8 @@ def _configure_ollama_profile(manager) -> str:
     name = _text_prompt("Profile name", default="ollama").strip() or "ollama"
     label = _text_prompt("Display label", default=name).strip() or name
     base_url = (
-        _text_prompt("Ollama base URL", default="http://localhost:11434").strip()
-        or "http://localhost:11434"
+        _text_prompt("Ollama base URL", default="http://localhost:11434/v1").strip()
+        or "http://localhost:11434/v1"
     )
     model = _text_prompt("Default model (e.g. llama3.2, qwen2.5-coder)", default="").strip()
     if not model:
