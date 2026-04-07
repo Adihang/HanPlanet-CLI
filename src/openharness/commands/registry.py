@@ -950,6 +950,23 @@ def create_default_command_registry(
 
         return CommandResult(message="설정이 완료됐습니다.", refresh_runtime=True)
 
+    async def _language_handler(args: str, context: CommandContext) -> CommandResult:
+        """Set the AI response language.  /language Korean  |  /language  (show current)"""
+        del context
+        settings = load_settings()
+        lang = args.strip()
+        if not lang:
+            current = settings.language or "None (not set)"
+            return CommandResult(message=f"Response language: {current}")
+        # Accept "none" / "" to disable
+        if lang.lower() in ("none", "off", "disable", "disabled", "없음"):
+            settings.language = ""
+            save_settings(settings)
+            return CommandResult(message="Response language disabled.", refresh_runtime=True)
+        settings.language = lang
+        save_settings(settings)
+        return CommandResult(message=f"Response language → {lang}", refresh_runtime=True)
+
     async def _login_handler(args: str, context: CommandContext) -> CommandResult:
         del context
         settings = load_settings()
@@ -2019,6 +2036,7 @@ def create_default_command_registry(
     registry.register(SlashCommand("onboarding", "Show the quickstart guide", _onboarding_handler))
     registry.register(SlashCommand("skills", "List or show available skills", _skills_handler))
     registry.register(SlashCommand("config", "Show or update configuration", _config_handler))
+    registry.register(SlashCommand("language", "Show or set AI response language", _language_handler))
     registry.register(SlashCommand("mcp", "Show MCP status", _mcp_handler))
     registry.register(SlashCommand("plugin", "Manage plugins", _plugin_handler))
     registry.register(SlashCommand("reload-plugins", "Reload plugin discovery for this workspace", _reload_plugins_handler))

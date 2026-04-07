@@ -40,6 +40,8 @@ const SELECTABLE_COMMANDS = new Set([
 	'/fast',
 	'/vim',
 	'/voice',
+	'/config',
+	'/language',
 ]);
 
 type SelectModalState = {

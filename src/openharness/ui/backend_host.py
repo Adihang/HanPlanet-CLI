@@ -298,6 +298,12 @@ class ReactBackendHost:
     async def _apply_select_command(self, command_name: str, value: str) -> bool:
         command = command_name.strip().lstrip("/").lower()
         selected = value.strip()
+
+        # /config top-level picker: re-dispatch to the chosen sub-command's selector
+        if command == "config":
+            await self._handle_select_command(selected)
+            return True
+
         line = self._build_select_command_line(command, selected)
         if line is None:
             await self._emit(BackendEvent(type="error", message=f"Unknown select command: {command_name}"))
@@ -330,6 +336,8 @@ class ReactBackendHost:
             return f"/voice {value}"
         if command == "model":
             return f"/model {value}"
+        if command == "language":
+            return f"/language {value}"
         return None
 
     def _status_snapshot(self) -> BackendEvent:
@@ -578,6 +586,57 @@ class ReactBackendHost:
                 BackendEvent(
                     type="select_request",
                     modal={"kind": "select", "title": "Model", "command": "model"},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command == "language":
+            current_lang = settings.language or ""
+            lang_options = [
+                ("Korean",   "한국어"),
+                ("English",  "English"),
+                ("Japanese", "日本語"),
+                ("Chinese",  "中文"),
+                ("Spanish",  "Español"),
+                ("French",   "Français"),
+                ("German",   "Deutsch"),
+                ("",         "None (disable)"),
+            ]
+            options = [
+                {
+                    "value": val,
+                    "label": label,
+                    "active": val == current_lang,
+                }
+                for val, label in lang_options
+            ]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": "Response Language", "command": "language"},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command == "config":
+            fast_state = "On" if state.fast_mode else "Off"
+            vim_state = "On" if state.vim_enabled else "Off"
+            options = [
+                {"value": "language", "label": "🌐  Response Language",  "description": f"Current: {settings.language or 'None'}",  "active": False},
+                {"value": "model",    "label": "🤖  Model",              "description": f"Current: {current_model}",                "active": False},
+                {"value": "effort",   "label": "⚡  Reasoning Effort",   "description": f"Current: {settings.effort}",              "active": False},
+                {"value": "fast",     "label": "🚀  Fast Mode",          "description": f"Current: {fast_state}",                   "active": False},
+                {"value": "vim",      "label": "⌨️   Vim Mode",          "description": f"Current: {vim_state}",                    "active": False},
+                {"value": "turns",    "label": "🔄  Max Turns",          "description": f"Current: {settings.max_turns}",           "active": False},
+                {"value": "theme",    "label": "🎨  Theme",              "description": f"Current: {settings.theme}",               "active": False},
+                {"value": "provider", "label": "🔌  Provider Profile",   "description": f"Current: {settings.active_profile}",      "active": False},
+            ]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": "Settings", "command": "config"},
                     select_options=options,
                 )
             )
