@@ -42,6 +42,10 @@ const SELECTABLE_COMMANDS = new Set([
 	'/voice',
 	'/config',
 	'/language',
+	'/memory',
+	'/plugin',
+	'/rewind',
+	'/tasks',
 ]);
 
 type SelectModalState = {

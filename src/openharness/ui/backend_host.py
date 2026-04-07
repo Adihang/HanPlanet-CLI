@@ -16,6 +16,8 @@ from openharness.api.client import SupportsStreamingMessages
 from openharness.auth.manager import AuthManager
 from openharness.config.settings import CLAUDE_MODEL_ALIAS_OPTIONS, display_model_setting
 from openharness.bridge import get_bridge_manager
+from openharness.memory import list_memory_files
+from openharness.plugins import load_plugins
 from openharness.themes import list_themes
 from openharness.engine.stream_events import (
     AssistantTextDelta,
@@ -304,6 +306,35 @@ class ReactBackendHost:
             await self._handle_select_command(selected)
             return True
 
+        # /memory: action picker → optional file picker
+        if command == "memory":
+            if selected == "add-hint":
+                await self._emit(BackendEvent(type="info", message="To add a memory entry, type:\n/memory add TITLE :: CONTENT"))
+                await self._emit(BackendEvent(type="line_complete"))
+                return True
+            if selected in ("show", "remove"):
+                await self._handle_select_command(f"memory-{selected}")
+                return True
+            # "list" falls through to _build_select_command_line
+
+        # /plugin: action picker → optional plugin picker
+        if command == "plugin":
+            if selected == "install-hint":
+                await self._emit(BackendEvent(type="info", message="To install a plugin, type:\n/plugin install PATH"))
+                await self._emit(BackendEvent(type="line_complete"))
+                return True
+            if selected in ("enable", "disable", "uninstall"):
+                await self._handle_select_command(f"plugin-{selected}")
+                return True
+            # "list" falls through to _build_select_command_line
+
+        # /tasks: action picker → optional task picker
+        if command == "tasks":
+            if selected in ("stop", "show", "output"):
+                await self._handle_select_command(f"tasks-{selected}")
+                return True
+            # "list" falls through to _build_select_command_line
+
         line = self._build_select_command_line(command, selected)
         if line is None:
             await self._emit(BackendEvent(type="error", message=f"Unknown select command: {command_name}"))
@@ -338,6 +369,33 @@ class ReactBackendHost:
             return f"/model {value}"
         if command == "language":
             return f"/language {value}"
+        if command == "memory":
+            if value == "list":
+                return "/memory list"
+        if command == "memory-show":
+            return f"/memory show {value}"
+        if command == "memory-remove":
+            return f"/memory remove {value}"
+        if command == "plugin":
+            if value == "list":
+                return "/plugin list"
+        if command == "plugin-enable":
+            return f"/plugin enable {value}"
+        if command == "plugin-disable":
+            return f"/plugin disable {value}"
+        if command == "plugin-uninstall":
+            return f"/plugin uninstall {value}"
+        if command == "rewind":
+            return f"/rewind {value}"
+        if command == "tasks":
+            if value == "list":
+                return "/tasks list"
+        if command == "tasks-stop":
+            return f"/tasks stop {value}"
+        if command == "tasks-show":
+            return f"/tasks show {value}"
+        if command == "tasks-output":
+            return f"/tasks output {value}"
         return None
 
     def _status_snapshot(self) -> BackendEvent:
@@ -637,6 +695,147 @@ class ReactBackendHost:
                 BackendEvent(
                     type="select_request",
                     modal={"kind": "select", "title": "Settings", "command": "config"},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command == "memory":
+            files = list_memory_files(self._bundle.cwd)
+            count = len(files)
+            options = [
+                {"value": "list",     "label": "📋  목록 보기",  "description": f"{count}개 파일",        "active": False},
+                {"value": "show",     "label": "👁   내용 보기",  "description": "파일을 선택하세요",      "active": False},
+                {"value": "remove",   "label": "🗑   항목 삭제",  "description": "파일을 선택하세요",      "active": False},
+                {"value": "add-hint", "label": "➕  항목 추가",   "description": "/memory add TITLE :: CONTENT", "active": False},
+            ]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": "Memory", "command": "memory"},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command in ("memory-show", "memory-remove"):
+            files = list_memory_files(self._bundle.cwd)
+            if not files:
+                await self._emit(BackendEvent(type="info", message="메모리 파일이 없습니다."))
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+            verb = "보기" if command == "memory-show" else "삭제"
+            options = [{"value": f.name, "label": f.name, "active": False} for f in files]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": f"파일 {verb}", "command": command},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command == "plugin":
+            plugins = load_plugins(settings, self._bundle.cwd)
+            count = len(plugins)
+            options = [
+                {"value": "list",         "label": "📋  목록 보기",    "description": f"{count}개 플러그인",           "active": False},
+                {"value": "enable",       "label": "✅  활성화",        "description": "플러그인을 선택하세요",         "active": False},
+                {"value": "disable",      "label": "🚫  비활성화",      "description": "플러그인을 선택하세요",         "active": False},
+                {"value": "uninstall",    "label": "🗑   제거",          "description": "플러그인을 선택하세요",         "active": False},
+                {"value": "install-hint", "label": "📥  설치 (경로 입력)", "description": "/plugin install PATH",       "active": False},
+            ]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": "Plugins", "command": "plugin"},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command in ("plugin-enable", "plugin-disable", "plugin-uninstall"):
+            plugins = load_plugins(settings, self._bundle.cwd)
+            if not plugins:
+                await self._emit(BackendEvent(type="info", message="플러그인이 없습니다."))
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+            verb_map = {"plugin-enable": "활성화", "plugin-disable": "비활성화", "plugin-uninstall": "제거"}
+            verb = verb_map[command]
+            options = [
+                {
+                    "value": p.name,
+                    "label": p.name,
+                    "active": bool(settings.enabled_plugins.get(p.name, True)),
+                }
+                for p in plugins
+            ]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": f"플러그인 {verb}", "command": command},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command == "rewind":
+            options = [
+                {"value": "1",  "label": "1 turn",   "active": False},
+                {"value": "2",  "label": "2 turns",  "active": False},
+                {"value": "3",  "label": "3 turns",  "active": False},
+                {"value": "5",  "label": "5 turns",  "active": False},
+                {"value": "10", "label": "10 turns", "active": False},
+            ]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": "Rewind: 몇 턴 되돌릴까요?", "command": "rewind"},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command == "tasks":
+            manager = get_task_manager()
+            task_count = len(manager.list_tasks())
+            options = [
+                {"value": "list",   "label": "📋  목록 보기",     "description": f"{task_count}개 태스크", "active": False},
+                {"value": "stop",   "label": "🛑  태스크 중지",   "description": "태스크를 선택하세요",   "active": False},
+                {"value": "show",   "label": "👁   상세 보기",     "description": "태스크를 선택하세요",   "active": False},
+                {"value": "output", "label": "📄  출력 보기",      "description": "태스크를 선택하세요",   "active": False},
+            ]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": "Background Tasks", "command": "tasks"},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command in ("tasks-stop", "tasks-show", "tasks-output"):
+            manager = get_task_manager()
+            tasks = manager.list_tasks()
+            if not tasks:
+                await self._emit(BackendEvent(type="info", message="실행 중인 태스크가 없습니다."))
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+            verb_map = {"tasks-stop": "중지", "tasks-show": "상세 보기", "tasks-output": "출력 보기"}
+            verb = verb_map[command]
+            options = [
+                {
+                    "value": t.id,
+                    "label": f"{t.id}  [{t.status}]",
+                    "description": (t.description or "")[:60],
+                    "active": False,
+                }
+                for t in tasks
+            ]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": f"태스크 {verb}", "command": command},
                     select_options=options,
                 )
             )

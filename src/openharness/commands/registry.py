@@ -400,61 +400,6 @@ def create_default_command_registry(
                     return CommandResult(message=f"Removed memory entry {rest.strip()}")
                 return CommandResult(message=f"Memory entry not found: {rest.strip()}")
 
-        # Interactive menu
-        if _is_real_tty():
-            try:
-                import questionary
-                memory_dir = get_project_memory_dir(context.cwd)
-                memory_files = list_memory_files(context.cwd)
-                file_names = [f.name for f in memory_files]
-
-                choices = [
-                    questionary.Choice("📋 목록 보기 (list)", "list"),
-                    questionary.Choice("👁  내용 보기 (show)", "show"),
-                    questionary.Choice("➕ 항목 추가 (add)", "add"),
-                    questionary.Choice("🗑  항목 삭제 (remove)", "remove"),
-                ]
-                selected = await _qselect("메모리 작업 선택:", choices)
-                if selected is None:
-                    return CommandResult(message="취소됐습니다.")
-
-                if selected == "list":
-                    if not file_names:
-                        return CommandResult(message="No memory files.")
-                    return CommandResult(message="\n".join(file_names))
-
-                if selected == "show":
-                    if not file_names:
-                        return CommandResult(message="메모리 파일이 없습니다.")
-                    name = await _qselect("파일 선택:", [questionary.Choice(n, n) for n in file_names])
-                    if name is None:
-                        return CommandResult(message="취소됐습니다.")
-                    path = memory_dir / name
-                    return CommandResult(message=path.read_text(encoding="utf-8"))
-
-                if selected == "add":
-                    title = await _qtext("제목 입력:")
-                    if not title or not title.strip():
-                        return CommandResult(message="취소됐습니다.")
-                    content = await _qtext("내용 입력:")
-                    if not content or not content.strip():
-                        return CommandResult(message="취소됐습니다.")
-                    path = add_memory_entry(context.cwd, title.strip(), content.strip())
-                    return CommandResult(message=f"Added memory entry {path.name}")
-
-                if selected == "remove":
-                    if not file_names:
-                        return CommandResult(message="메모리 파일이 없습니다.")
-                    name = await _qselect("삭제할 파일 선택:", [questionary.Choice(n, n) for n in file_names])
-                    if name is None:
-                        return CommandResult(message="취소됐습니다.")
-                    if remove_memory_entry(context.cwd, name):
-                        return CommandResult(message=f"Removed memory entry {name}")
-                    return CommandResult(message=f"Memory entry not found: {name}")
-
-            except ImportError:
-                pass
-
         memory_dir = get_project_memory_dir(context.cwd)
         entrypoint = get_memory_entrypoint(context.cwd)
         return CommandResult(
@@ -1046,25 +991,6 @@ def create_default_command_registry(
                 context.app_state.set(fast_mode=enabled)
             return CommandResult(message=f"Fast mode {'enabled' if enabled else 'disabled'}.")
 
-        if _is_real_tty():
-            try:
-                import questionary
-                state_label = "켜짐 (on)" if current else "꺼짐 (off)"
-                choices = [
-                    questionary.Choice("🚀 켜기 (on)", "on"),
-                    questionary.Choice("💤 끄기 (off)", "off"),
-                ]
-                selected = await _qselect(f"Fast mode (현재: {state_label}):", choices, default="on" if current else "off")
-                if selected is None:
-                    return CommandResult(message="취소됐습니다.")
-                enabled = selected == "on"
-                settings.fast_mode = enabled
-                save_settings(settings)
-                if context.app_state is not None:
-                    context.app_state.set(fast_mode=enabled)
-                return CommandResult(message=f"Fast mode {'enabled' if enabled else 'disabled'}.", refresh_runtime=True)
-            except ImportError:
-                pass
         return CommandResult(message=f"Fast mode: {'on' if current else 'off'}\nUsage: /fast [on|off|toggle]")
 
     async def _effort_handler(args: str, context: CommandContext) -> CommandResult:
@@ -1083,25 +1009,6 @@ def create_default_command_registry(
                 context.app_state.set(effort=value)
             return CommandResult(message=f"Reasoning effort set to {value}.")
 
-        if _is_real_tty():
-            try:
-                import questionary
-                choices = [
-                    questionary.Choice("⚡ low    — 빠른 응답, 얕은 추론", "low"),
-                    questionary.Choice("⚖️  medium — 균형 (기본값)", "medium"),
-                    questionary.Choice("🔬 high   — 깊은 추론, 느린 응답", "high"),
-                ]
-                selected = await _qselect(f"추론 깊이 선택 (현재: {current}):", choices, default=current)
-                if selected is None:
-                    return CommandResult(message="취소됐습니다.")
-                settings.effort = selected
-                save_settings(settings)
-                context.engine.set_system_prompt(build_runtime_system_prompt(settings, cwd=context.cwd))
-                if context.app_state is not None:
-                    context.app_state.set(effort=selected)
-                return CommandResult(message=f"Reasoning effort set to {selected}.", refresh_runtime=True)
-            except ImportError:
-                pass
         return CommandResult(message=f"Reasoning effort: {current}\nUsage: /effort [low|medium|high]")
 
     async def _passes_handler(args: str, context: CommandContext) -> CommandResult:
@@ -1120,21 +1027,6 @@ def create_default_command_registry(
                 context.app_state.set(passes=passes)
             return CommandResult(message=f"Pass count set to {passes}.")
 
-        if _is_real_tty():
-            try:
-                import questionary
-                choices = [questionary.Choice(str(i), i) for i in range(1, 9)]
-                selected = await _qselect(f"패스 수 선택 (현재: {current}):", choices, default=current)
-                if selected is None:
-                    return CommandResult(message="취소됐습니다.")
-                settings.passes = selected
-                save_settings(settings)
-                context.engine.set_system_prompt(build_runtime_system_prompt(settings, cwd=context.cwd))
-                if context.app_state is not None:
-                    context.app_state.set(passes=selected)
-                return CommandResult(message=f"Pass count set to {selected}.", refresh_runtime=True)
-            except ImportError:
-                pass
         return CommandResult(message=f"Passes: {current}\nUsage: /passes [COUNT]")
 
     async def _turns_handler(args: str, context: CommandContext) -> CommandResult:
@@ -1166,35 +1058,6 @@ def create_default_command_registry(
             context.engine.set_max_turns(turns)
             return CommandResult(message=f"Max turns set to {turns}.")
 
-        if _is_real_tty():
-            try:
-                presets = ["10", "50", "100", "200", "500", "unlimited"]
-                import questionary
-                choices = [questionary.Choice(p, p) for p in presets] + [
-                    questionary.Choice("✏️  직접 입력...", "__custom__")
-                ]
-                selected = await _qselect(
-                    f"최대 턴 수 선택 (현재: {engine_turns}):", choices, default=engine_turns if engine_turns in presets else None
-                )
-                if selected is None:
-                    return CommandResult(message="취소됐습니다.")
-                if selected == "__custom__":
-                    selected = await _qtext("턴 수 입력:", default=str(settings.max_turns))
-                    if selected is None:
-                        return CommandResult(message="취소됐습니다.")
-                if selected.lower() == "unlimited":
-                    context.engine.set_max_turns(None)
-                    return CommandResult(message="Max turns set to unlimited for this session.", refresh_runtime=True)
-                try:
-                    turns = max(1, min(int(selected), 512))
-                except ValueError:
-                    return CommandResult(message="숫자를 입력해주세요.")
-                settings.max_turns = turns
-                save_settings(settings)
-                context.engine.set_max_turns(turns)
-                return CommandResult(message=f"Max turns set to {turns}.", refresh_runtime=True)
-            except ImportError:
-                pass
         return CommandResult(
             message=(
                 f"Max turns (engine): {engine_turns}\n"
@@ -1429,37 +1292,6 @@ def create_default_command_registry(
 
         current = settings.permission.mode.value
 
-        # Interactive menu when running in a real terminal
-        if _is_real_tty():
-            try:
-                import asyncio
-                import questionary
-
-                def _show_menu() -> str | None:
-                    choices = [
-                        questionary.Choice(title="Default  (ask before write/execute)", value="default"),
-                        questionary.Choice(title="Auto     (allow everything automatically)", value="full_auto"),
-                        questionary.Choice(title="Plan     (block all writes)", value="plan"),
-                    ]
-                    return questionary.select(
-                        f"Permission mode (current: {_MODE_LABELS.get(current, current)}):",
-                        choices=choices,
-                        default=current,
-                    ).ask()
-
-                selected = await asyncio.to_thread(_show_menu)
-                if selected is None:
-                    return CommandResult(message="Cancelled.")
-                settings.permission.mode = PermissionMode(selected)
-                save_settings(settings)
-                context.engine.set_permission_checker(PermissionChecker(settings.permission))
-                if context.app_state is not None:
-                    context.app_state.set(permission_mode=settings.permission.mode.value)
-                label = _MODE_LABELS.get(selected, selected)
-                return CommandResult(message=f"Permission mode set to {label}", refresh_runtime=True)
-            except ImportError:
-                pass
-
         # Non-interactive fallback: show current status
         permission = settings.permission
         label = _MODE_LABELS.get(permission.mode.value, permission.mode.value)
@@ -1520,25 +1352,6 @@ def create_default_command_registry(
             if args.strip():
                 return _apply_model(args.strip())
 
-        if _is_real_tty():
-            try:
-                import questionary
-                current = display_model_setting(profile)
-                if profile.allowed_models:
-                    choices = [questionary.Choice(m, m) for m in profile.allowed_models]
-                    choices.append(questionary.Choice("✏️  직접 입력...", "__custom__"))
-                    selected = await _qselect(f"모델 선택 (현재: {current}):", choices, default=current if current in profile.allowed_models else None)
-                else:
-                    selected = "__custom__"
-                if selected is None:
-                    return CommandResult(message="취소됐습니다.")
-                if selected == "__custom__":
-                    selected = await _qtext("모델명 입력:", default=current)
-                    if not selected or not selected.strip():
-                        return CommandResult(message="취소됐습니다.")
-                return _apply_model(selected.strip())
-            except ImportError:
-                pass
         return CommandResult(message=f"Model: {display_model_setting(profile)}\nProfile: {active_profile}\nUsage: /model [show|MODEL]")
 
     async def _provider_handler(args: str, context: CommandContext) -> CommandResult:
@@ -1584,25 +1397,6 @@ def create_default_command_registry(
                 return CommandResult(message="\n".join(lines))
             target = tokens[1] if tokens[0] == "use" and len(tokens) == 2 else tokens[0]
             return _switch_to(target)
-
-        if _is_real_tty():
-            try:
-                import questionary
-                active_name = manager.get_active_profile()
-                choices = []
-                for name, info in profiles.items():
-                    configured = "✅" if info["configured"] else "❌"
-                    active_mark = " (현재)" if name == active_name else ""
-                    title = f"{configured} {info['label']}{active_mark}  [{info['model']}]"
-                    choices.append(questionary.Choice(title=title, value=name))
-                selected = await _qselect("프로바이더 프로필 선택:", choices, default=active_name)
-                if selected is None:
-                    return CommandResult(message="취소됐습니다.")
-                if selected == active_name:
-                    return CommandResult(message=f"이미 {active_name} 프로파일을 사용 중입니다.")
-                return _switch_to(selected)
-            except ImportError:
-                pass
 
         active_name = manager.get_active_profile()
         active = profiles[active_name]
@@ -1670,21 +1464,6 @@ def create_default_command_registry(
             if tokens[0] not in {"list", "preview", "show"}:
                 return _apply_theme(tokens[0])
 
-        if _is_real_tty():
-            try:
-                import questionary
-                available = list_themes()
-                choices = [
-                    questionary.Choice(f"{'*' if n == current else ' '} {n}", n)
-                    for n in available
-                ]
-                selected = await _qselect(f"테마 선택 (현재: {current}):", choices, default=current if current in available else None)
-                if selected is None:
-                    return CommandResult(message="취소됐습니다.")
-                return _apply_theme(selected)
-            except ImportError:
-                pass
-
         available = list_themes()
         lines = [f"{'*' if name == current else ' '} {name}" for name in available]
         return CommandResult(message="\n".join(lines) + "\nUsage: /theme [list|show|NAME|preview NAME]")
@@ -1718,20 +1497,6 @@ def create_default_command_registry(
                 return _apply_style(tokens[1])
             if tokens[0] not in {"list", "show"}:
                 return _apply_style(tokens[0])
-
-        if _is_real_tty():
-            try:
-                import questionary
-                choices = [
-                    questionary.Choice(f"{'*' if style.name == current else ' '} {style.name}  [{style.source}]", style.name)
-                    for style in styles
-                ]
-                selected = await _qselect(f"출력 스타일 선택 (현재: {current}):", choices, default=current if current in available else None)
-                if selected is None:
-                    return CommandResult(message="취소됐습니다.")
-                return _apply_style(selected)
-            except ImportError:
-                pass
 
         return CommandResult(message=f"Output style: {current}\nUsage: /output-style [show|list|NAME]")
 
@@ -1767,25 +1532,6 @@ def create_default_command_registry(
                 context.app_state.set(vim_enabled=enabled)
             return CommandResult(message=f"Vim mode {'enabled' if enabled else 'disabled'}.")
 
-        if _is_real_tty():
-            try:
-                import questionary
-                state_label = "켜짐 (on)" if current else "꺼짐 (off)"
-                choices = [
-                    questionary.Choice("⌨️  켜기 (on)", "on"),
-                    questionary.Choice("🖱  끄기 (off)", "off"),
-                ]
-                selected = await _qselect(f"Vim 모드 (현재: {state_label}):", choices, default="on" if current else "off")
-                if selected is None:
-                    return CommandResult(message="취소됐습니다.")
-                enabled = selected == "on"
-                settings.vim_mode = enabled
-                save_settings(settings)
-                if context.app_state is not None:
-                    context.app_state.set(vim_enabled=enabled)
-                return CommandResult(message=f"Vim mode {'enabled' if enabled else 'disabled'}.", refresh_runtime=True)
-            except ImportError:
-                pass
         return CommandResult(message=f"Vim mode: {'on' if current else 'off'}\nUsage: /vim [on|off|toggle]")
 
     async def _voice_handler(args: str, context: CommandContext) -> CommandResult:
