@@ -984,32 +984,78 @@ def create_default_command_registry() -> CommandRegistry:
     _MODE_LABELS = {"default": "Default", "plan": "Plan Mode", "full_auto": "Auto"}
 
     async def _permissions_handler(args: str, context: CommandContext) -> CommandResult:
+        import sys
+
         settings = load_settings()
         tokens = args.split()
-        if not tokens or tokens[0] == "show":
-            permission = settings.permission
-            label = _MODE_LABELS.get(permission.mode.value, permission.mode.value)
-            return CommandResult(
-                message=(
-                    f"Mode: {label}\n"
-                    f"Allowed tools: {permission.allowed_tools}\n"
-                    f"Denied tools: {permission.denied_tools}"
-                )
+
+        # Explicit argument passed — handle directly
+        if tokens and tokens[0] != "show":
+            target_mode: str | None = None
+            if tokens[0] == "set" and len(tokens) == 2:
+                target_mode = tokens[1]
+            elif len(tokens) == 1 and tokens[0] in _MODE_LABELS:
+                target_mode = tokens[0]
+            if target_mode is not None:
+                settings.permission.mode = PermissionMode(target_mode)
+                save_settings(settings)
+                context.engine.set_permission_checker(PermissionChecker(settings.permission))
+                if context.app_state is not None:
+                    context.app_state.set(permission_mode=settings.permission.mode.value)
+                label = _MODE_LABELS.get(target_mode, target_mode)
+                return CommandResult(message=f"Permission mode set to {label}", refresh_runtime=True)
+            return CommandResult(message="Usage: /permissions [show|default|auto|plan]")
+
+        current = settings.permission.mode.value
+
+        # Interactive menu when running in a real terminal
+        is_real_tty = (
+            sys.stdin.isatty()
+            and sys.stdout.isatty()
+            and sys.stdin is sys.__stdin__
+            and sys.stdout is sys.__stdout__
+        )
+        if is_real_tty:
+            try:
+                import asyncio
+                import questionary
+
+                def _show_menu() -> str | None:
+                    choices = [
+                        questionary.Choice(title="Default  (ask before write/execute)", value="default"),
+                        questionary.Choice(title="Auto     (allow everything automatically)", value="full_auto"),
+                        questionary.Choice(title="Plan     (block all writes)", value="plan"),
+                    ]
+                    return questionary.select(
+                        f"Permission mode (current: {_MODE_LABELS.get(current, current)}):",
+                        choices=choices,
+                        default=current,
+                    ).ask()
+
+                selected = await asyncio.to_thread(_show_menu)
+                if selected is None:
+                    return CommandResult(message="Cancelled.")
+                settings.permission.mode = PermissionMode(selected)
+                save_settings(settings)
+                context.engine.set_permission_checker(PermissionChecker(settings.permission))
+                if context.app_state is not None:
+                    context.app_state.set(permission_mode=settings.permission.mode.value)
+                label = _MODE_LABELS.get(selected, selected)
+                return CommandResult(message=f"Permission mode set to {label}", refresh_runtime=True)
+            except ImportError:
+                pass
+
+        # Non-interactive fallback: show current status
+        permission = settings.permission
+        label = _MODE_LABELS.get(permission.mode.value, permission.mode.value)
+        return CommandResult(
+            message=(
+                f"Mode: {label}\n"
+                f"Allowed tools: {permission.allowed_tools}\n"
+                f"Denied tools: {permission.denied_tools}\n"
+                f"Usage: /permissions [default|auto|plan]"
             )
-        target_mode: str | None = None
-        if tokens[0] == "set" and len(tokens) == 2:
-            target_mode = tokens[1]
-        elif len(tokens) == 1 and tokens[0] in _MODE_LABELS:
-            target_mode = tokens[0]
-        if target_mode is not None:
-            settings.permission.mode = PermissionMode(target_mode)
-            save_settings(settings)
-            context.engine.set_permission_checker(PermissionChecker(settings.permission))
-            if context.app_state is not None:
-                context.app_state.set(permission_mode=settings.permission.mode.value)
-            label = _MODE_LABELS.get(target_mode, target_mode)
-            return CommandResult(message=f"Permission mode set to {label}", refresh_runtime=True)
-        return CommandResult(message="Usage: /permissions [show|MODE]")
+        )
 
     async def _plan_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
