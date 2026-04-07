@@ -206,13 +206,11 @@ def _coerce_setting_value(settings: Settings, key: str, raw: str):
 
 def _is_real_tty() -> bool:
     """Return True when running in an interactive real terminal."""
-    import sys
-    return (
-        sys.stdin.isatty()
-        and sys.stdout.isatty()
-        and sys.stdin is sys.__stdin__
-        and sys.stdout is sys.__stdout__
-    )
+    import os
+    try:
+        return os.isatty(0) and os.isatty(1)
+    except Exception:
+        return False
 
 
 async def _qselect(prompt: str, choices: list, *, default=None):
@@ -784,8 +782,6 @@ def create_default_command_registry(
         return CommandResult(message="\n".join(lines))
 
     async def _config_handler(args: str, context: CommandContext) -> CommandResult:
-        import sys
-
         settings = load_settings()
         tokens = args.split(maxsplit=2)
 
@@ -807,13 +803,7 @@ def create_default_command_registry(
             return CommandResult(message="Usage: /config [show|set KEY VALUE]")
 
         # Interactive menu
-        is_real_tty = (
-            sys.stdin.isatty()
-            and sys.stdout.isatty()
-            and sys.stdin is sys.__stdin__
-            and sys.stdout is sys.__stdout__
-        )
-        if not is_real_tty:
+        if not _is_real_tty():
             return CommandResult(message=settings.model_dump_json(indent=2))
 
         try:
@@ -955,8 +945,8 @@ def create_default_command_registry(
                 save_settings(settings)
                 return CommandResult(message=f"max_turns → {settings.max_turns}", refresh_runtime=True)
 
-        except ImportError:
-            return CommandResult(message=settings.model_dump_json(indent=2))
+        except Exception as exc:
+            return CommandResult(message=f"메뉴 오류: {exc}\n\n{settings.model_dump_json(indent=2)}")
 
         return CommandResult(message="설정이 완료됐습니다.", refresh_runtime=True)
 
@@ -1400,8 +1390,6 @@ def create_default_command_registry(
     _MODE_LABELS = {"default": "Default", "plan": "Plan Mode", "full_auto": "Auto"}
 
     async def _permissions_handler(args: str, context: CommandContext) -> CommandResult:
-        import sys
-
         settings = load_settings()
         tokens = args.split()
 
@@ -1425,13 +1413,7 @@ def create_default_command_registry(
         current = settings.permission.mode.value
 
         # Interactive menu when running in a real terminal
-        is_real_tty = (
-            sys.stdin.isatty()
-            and sys.stdout.isatty()
-            and sys.stdin is sys.__stdin__
-            and sys.stdout is sys.__stdout__
-        )
-        if is_real_tty:
+        if _is_real_tty():
             try:
                 import asyncio
                 import questionary
