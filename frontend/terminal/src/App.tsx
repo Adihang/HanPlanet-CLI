@@ -46,6 +46,8 @@ const SELECTABLE_COMMANDS = new Set([
 	'/plugin',
 	'/rewind',
 	'/tasks',
+	'/agents',
+	'/skills',
 ]);
 
 type SelectModalState = {

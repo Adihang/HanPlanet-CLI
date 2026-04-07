@@ -18,6 +18,7 @@ from openharness.config.settings import CLAUDE_MODEL_ALIAS_OPTIONS, display_mode
 from openharness.bridge import get_bridge_manager
 from openharness.memory import list_memory_files
 from openharness.plugins import load_plugins
+from openharness.skills import load_skill_registry
 from openharness.themes import list_themes
 from openharness.engine.stream_events import (
     AssistantTextDelta,
@@ -401,6 +402,10 @@ class ReactBackendHost:
             return f"/tasks show {value}"
         if command == "tasks-output":
             return f"/tasks output {value}"
+        if command == "agents":
+            return f"/agents show {value}"
+        if command == "skills":
+            return f"/skills {value}"
         return None
 
     def _status_snapshot(self) -> BackendEvent:
@@ -884,6 +889,59 @@ class ReactBackendHost:
                 BackendEvent(
                     type="select_request",
                     modal={"kind": "select", "title": f"태스크 {verb}", "command": command},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command == "agents":
+            manager = get_task_manager()
+            agent_tasks = [
+                t for t in manager.list_tasks()
+                if t.type in {"local_agent", "remote_agent", "in_process_teammate"}
+            ]
+            if not agent_tasks:
+                await self._emit(BackendEvent(type="info", message="No active or recorded agents."))
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+            options = [
+                {
+                    "value": t.id,
+                    "label": f"[{t.status}]  {t.id}",
+                    "description": (t.description or "")[:60],
+                    "active": False,
+                }
+                for t in agent_tasks
+            ]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": "Agents — 상세 보기", "command": "agents"},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command == "skills":
+            skill_registry = load_skill_registry(self._bundle.cwd)
+            skills = skill_registry.list_skills()
+            if not skills:
+                await self._emit(BackendEvent(type="info", message="No skills available."))
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+            options = [
+                {
+                    "value": s.name,
+                    "label": s.name,
+                    "description": s.description,
+                    "active": False,
+                }
+                for s in skills
+            ]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": "Skills — 내용 보기", "command": "skills"},
                     select_options=options,
                 )
             )
