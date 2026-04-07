@@ -248,6 +248,7 @@ uv run oh setup
    - `OpenAI-Compatible API`
    - `Codex Subscription`
    - `GitHub Copilot`
+   - `Ollama / Local`
 2. For compatible API families, choose a concrete backend preset
 3. If needed, authenticate the selected workflow
 4. Pick or confirm the model
@@ -263,6 +264,47 @@ Compatible API families currently guide you through presets such as:
 - `OpenAI-Compatible API`:
   - OpenAI official
   - OpenRouter
+- `Ollama / Local`:
+  - Ollama
+  - vLLM (or any local OpenAI-compatible server)
+
+### Ollama (Local Models)
+
+Run OpenHarness fully offline with [Ollama](https://ollama.com). No API key required.
+
+**1. Install Ollama and pull a model**
+
+```bash
+# macOS
+brew install ollama
+
+# Pull a model
+ollama pull llama3.2
+# or
+ollama pull gemma4
+```
+
+**2. Run setup**
+
+```bash
+oh setup
+# → Choose "Ollama / Local"
+# → Enter base URL (default: http://localhost:11434)
+# → Enter model name (e.g. llama3.2, gemma4, qwen2.5-coder)
+```
+
+**3. Launch**
+
+```bash
+oh
+```
+
+To switch between Ollama and a cloud provider:
+
+```bash
+oh provider use ollama        # local
+oh provider use claude-api    # back to Claude
+```
 
 Arbitrary compatible endpoints are still supported through advanced profile commands:
 
