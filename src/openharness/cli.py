@@ -415,6 +415,7 @@ def _select_setup_workflow(
     hints = {
         "claude-api": ("Claude / Kimi / GLM / MiniMax", "fg:#7aa2f7"),
         "openai-compatible": ("OpenAI / OpenRouter", "fg:#9ece6a"),
+        "ollama": ("Local / Ollama / vLLM", "fg:#e0af68"),
     }
 
     if _can_use_questionary():
@@ -521,6 +522,34 @@ def _configure_custom_profile_via_setup(manager) -> str:
     return name
 
 
+def _configure_ollama_profile(manager) -> str:
+    from openharness.config.settings import ProviderProfile
+
+    name = _text_prompt("Profile name", default="ollama").strip() or "ollama"
+    label = _text_prompt("Display label", default=name).strip() or name
+    base_url = (
+        _text_prompt("Ollama base URL", default="http://localhost:11434").strip()
+        or "http://localhost:11434"
+    )
+    model = _text_prompt("Default model (e.g. llama3.2, qwen2.5-coder)", default="").strip()
+    if not model:
+        raise typer.BadParameter("Model name cannot be empty.")
+
+    profile = ProviderProfile(
+        label=label,
+        provider="ollama",
+        api_format="openai",
+        auth_source="no_auth",
+        default_model=model,
+        last_model=model,
+        base_url=base_url,
+        credential_slot=None,
+        allowed_models=[model],
+    )
+    manager.upsert_profile(name, profile)
+    return name
+
+
 def _ensure_preset_profile(
     manager,
     *,
@@ -621,6 +650,9 @@ def _specialize_setup_target(manager, target: str) -> str:
             lock_model=False,
         )
 
+    if target == "ollama":
+        return _configure_ollama_profile(manager)
+
     return target
 
 
@@ -629,6 +661,8 @@ def _ensure_profile_auth(manager, profile_name: str) -> None:
     from openharness.config.settings import auth_source_provider_name, auth_source_uses_api_key
 
     profile = manager.list_profiles()[profile_name]
+    if profile.auth_source == "no_auth":
+        return  # local providers don't need credentials
     if not auth_source_uses_api_key(profile.auth_source):
         _login_provider(auth_source_provider_name(profile.auth_source))
         return
@@ -754,6 +788,24 @@ def setup_cmd(
     if not statuses:
         print("No provider profiles available.", file=sys.stderr)
         raise typer.Exit(1)
+
+    # Inject a virtual "ollama" entry so users can configure Ollama even before a profile exists
+    if not any(p.provider == "ollama" for p in manager.list_profiles().values()):
+        statuses = {
+            **statuses,
+            "ollama": {
+                "label": "Ollama / Local",
+                "provider": "ollama",
+                "api_format": "openai",
+                "auth_source": "no_auth",
+                "configured": True,
+                "auth_state": "configured",
+                "active": False,
+                "base_url": None,
+                "model": "",
+                "credential_slot": None,
+            },
+        }
 
     target = profile
     if target is None:

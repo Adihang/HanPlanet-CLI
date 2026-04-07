@@ -249,6 +249,20 @@ class AuthManager:
         auth_sources = self.get_auth_source_statuses()
         statuses: dict[str, Any] = {}
         for name, profile in self.list_profiles().items():
+            if profile.auth_source == "no_auth":
+                statuses[name] = {
+                    "label": display_label_for_profile(name, profile),
+                    "provider": profile.provider,
+                    "api_format": profile.api_format,
+                    "auth_source": profile.auth_source,
+                    "configured": True,
+                    "auth_state": "configured",
+                    "active": name == active,
+                    "base_url": profile.base_url,
+                    "model": display_model_setting(profile),
+                    "credential_slot": profile.credential_slot,
+                }
+                continue
             source_status = auth_sources.get(profile.auth_source, {})
             configured = bool(source_status.get("configured"))
             auth_state = str(source_status.get("state", "missing"))

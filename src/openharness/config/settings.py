@@ -272,6 +272,8 @@ def auth_source_provider_name(auth_source: str) -> str:
 
 def auth_source_uses_api_key(auth_source: str) -> bool:
     """Return True when the auth source is backed by a user-supplied API key."""
+    if auth_source == "no_auth":
+        return False
     return auth_source.endswith("_api_key")
 
 
@@ -301,6 +303,8 @@ def default_auth_source_for_provider(provider: str, api_format: str | None = Non
         return "bedrock_api_key"
     if provider == "vertex":
         return "vertex_api_key"
+    if provider in {"ollama", "vllm"}:
+        return "no_auth"
     if provider == "openai" or api_format == "openai":
         return "openai_api_key"
     return "anthropic_api_key"
@@ -536,6 +540,15 @@ class Settings(BaseModel):
         _, profile = self.resolve_profile()
         provider = profile.provider.strip()
         auth_source = profile.auth_source.strip() or default_auth_source_for_provider(provider, profile.api_format)
+        if auth_source == "no_auth":
+            return ResolvedAuth(
+                provider=provider,
+                auth_kind="api_key",
+                value="ollama",  # dummy key — local providers ignore the Authorization header
+                source="local",
+                state="configured",
+            )
+
         if auth_source in {"codex_subscription", "claude_subscription"}:
             from openharness.auth.external import (
                 is_third_party_anthropic_endpoint,
