@@ -306,6 +306,11 @@ class ReactBackendHost:
             await self._handle_select_command(selected)
             return True
 
+        # model group picker → sub-level model list
+        if command == "model-group":
+            await self._handle_select_command(f"model-for-{selected}")
+            return True
+
         # /memory: action picker → optional file picker
         if command == "memory":
             if selected == "add-hint":
@@ -638,6 +643,49 @@ class ReactBackendHost:
             )
             return
 
+        if command == "model-group":
+            options = [
+                {"value": "anthropic", "label": "🟣  Anthropic / Claude",  "description": "claude-sonnet, claude-opus …",         "active": active_profile.provider in {"anthropic", "anthropic_claude"}},
+                {"value": "openai",    "label": "🟢  OpenAI",              "description": "gpt-5, o4-mini …",                     "active": active_profile.provider in {"openai", "openai_codex"}},
+                {"value": "ollama",    "label": "🦙  Ollama / Local",       "description": "llama, gemma, qwen … (로컬 목록 자동 조회)", "active": active_profile.provider == "ollama"},
+                {"value": "deepseek",  "label": "🔵  DeepSeek",            "description": "deepseek-chat, deepseek-reasoner",      "active": active_profile.provider == "deepseek"},
+                {"value": "gemini",    "label": "🔷  Google Gemini",        "description": "gemini-2.5-pro, gemini-2.5-flash",      "active": active_profile.provider == "gemini"},
+                {"value": "dashscope", "label": "🟡  DashScope / Qwen",    "description": "qwen3-max, qwen3.5-flash",              "active": active_profile.provider == "dashscope"},
+                {"value": "moonshot",  "label": "🌙  Moonshot / Kimi",     "description": "kimi-k2.5, kimi-k2-turbo",             "active": active_profile.provider == "moonshot"},
+                {"value": "groq",      "label": "⚡  Groq",                "description": "llama-3.3-70b, mixtral",               "active": active_profile.provider == "groq"},
+                {"value": "mistral",   "label": "🌊  Mistral",             "description": "mistral-large, codestral",             "active": active_profile.provider == "mistral"},
+            ]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": "Model — Provider 선택", "command": "model-group"},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command.startswith("model-for-"):
+            group = command[len("model-for-"):]
+            options = self._model_options_for_group(group, current_model, active_profile)
+            group_labels = {
+                "anthropic": "Anthropic / Claude", "openai": "OpenAI", "ollama": "Ollama / Local",
+                "deepseek": "DeepSeek", "gemini": "Gemini", "dashscope": "DashScope / Qwen",
+                "moonshot": "Moonshot / Kimi", "groq": "Groq", "mistral": "Mistral",
+            }
+            title = f"Model — {group_labels.get(group, group.title())}"
+            if not options:
+                await self._emit(BackendEvent(type="error", message=f"No models for '{group}'"))
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": title, "command": "model"},
+                    select_options=options,
+                )
+            )
+            return
+
         if command == "model":
             options = self._model_select_options(current_model, active_profile.provider, active_profile.allowed_models)
             await self._emit(
@@ -683,7 +731,7 @@ class ReactBackendHost:
             vim_state = "On" if state.vim_enabled else "Off"
             options = [
                 {"value": "language", "label": "🌐  Response Language",  "description": f"Current: {settings.language or 'None'}",  "active": False},
-                {"value": "model",    "label": "🤖  Model",              "description": f"Current: {current_model}",                "active": False},
+                {"value": "model-group", "label": "🤖  Model",            "description": f"Current: {current_model}",                "active": False},
                 {"value": "effort",   "label": "⚡  Reasoning Effort",   "description": f"Current: {settings.effort}",              "active": False},
                 {"value": "fast",     "label": "🚀  Fast Mode",          "description": f"Current: {fast_state}",                   "active": False},
                 {"value": "vim",      "label": "⌨️   Vim Mode",          "description": f"Current: {vim_state}",                    "active": False},
@@ -913,6 +961,109 @@ class ReactBackendHost:
                 }
             )
         return options
+
+    def _model_options_for_group(
+        self,
+        group: str,
+        current_model: str,
+        active_profile: object,
+    ) -> list[dict[str, object]]:
+        """Return select options for a specific provider group."""
+
+        def opt(value: str, description: str = "") -> dict[str, object]:
+            return {"value": value, "label": value, "description": description, "active": value == current_model}
+
+        if group == "anthropic":
+            return [
+                {"value": v, "label": l, "description": d, "active": v == current_model}
+                for v, l, d in CLAUDE_MODEL_ALIAS_OPTIONS
+            ]
+
+        if group == "openai":
+            return [
+                opt("gpt-5.4",       "OpenAI flagship"),
+                opt("gpt-5",         "General GPT-5"),
+                opt("gpt-4.1",       "Stable GPT-4.1"),
+                opt("gpt-4.1-mini",  "Smaller GPT-4.1"),
+                opt("o4-mini",       "Fast reasoning"),
+                opt("o3",            "Strong reasoning"),
+            ]
+
+        if group == "ollama":
+            # If profile has an explicit allowed list, use it
+            allowed = getattr(active_profile, "allowed_models", None)
+            if allowed:
+                return [opt(m, "Allowed model") for m in allowed]
+            # Try to query Ollama /api/tags
+            try:
+                import httpx
+                base_url = (getattr(active_profile, "base_url", None) or "http://localhost:11434/v1").rstrip("/")
+                api_base = base_url[:-3] if base_url.endswith("/v1") else base_url
+                resp = httpx.get(f"{api_base}/api/tags", timeout=3.0)
+                models = [m["name"] for m in resp.json().get("models", [])]
+                if models:
+                    return [opt(m, "Local Ollama model") for m in models]
+            except Exception:
+                pass
+            # Fallback suggestions
+            return [
+                opt("llama3.2",             "Meta Llama 3.2"),
+                opt("llama3.1:8b",          "Meta Llama 3.1 8B"),
+                opt("gemma3:latest",         "Google Gemma 3"),
+                opt("qwen2.5-coder:latest", "Qwen 2.5 Coder"),
+                opt("deepseek-r1:latest",   "DeepSeek R1"),
+                opt("mistral:latest",       "Mistral 7B"),
+                opt("phi4:latest",          "Microsoft Phi-4"),
+            ]
+
+        if group == "deepseek":
+            return [
+                opt("deepseek-chat",       "DeepSeek Chat V3"),
+                opt("deepseek-reasoner",   "DeepSeek R1 (reasoning)"),
+                opt("deepseek-coder-v2",   "DeepSeek Coder V2"),
+            ]
+
+        if group == "gemini":
+            return [
+                opt("gemini-2.5-pro",     "Gemini 2.5 Pro"),
+                opt("gemini-2.5-flash",   "Gemini 2.5 Flash"),
+                opt("gemini-2.0-flash",   "Gemini 2.0 Flash"),
+                opt("gemini-1.5-pro",     "Gemini 1.5 Pro"),
+            ]
+
+        if group == "dashscope":
+            return [
+                opt("qwen3-max",         "Qwen3 Max"),
+                opt("qwen3-plus",        "Qwen3 Plus"),
+                opt("qwen3.5-flash",     "Qwen3.5 Flash"),
+                opt("deepseek-r1",       "DeepSeek R1 (DashScope)"),
+                opt("deepseek-v3",       "DeepSeek V3 (DashScope)"),
+            ]
+
+        if group == "moonshot":
+            return [
+                opt("kimi-k2.5",                "Kimi K2.5"),
+                opt("kimi-k2-turbo-preview",    "Kimi K2 Turbo"),
+            ]
+
+        if group == "groq":
+            return [
+                opt("llama-3.3-70b-versatile",  "Llama 3.3 70B"),
+                opt("llama-3.1-8b-instant",     "Llama 3.1 8B"),
+                opt("mixtral-8x7b-32768",       "Mixtral 8x7B"),
+                opt("gemma2-9b-it",             "Gemma 2 9B"),
+                opt("deepseek-r1-distill-llama-70b", "DeepSeek R1 Distill"),
+            ]
+
+        if group == "mistral":
+            return [
+                opt("mistral-large-latest",  "Mistral Large"),
+                opt("mistral-small-latest",  "Mistral Small"),
+                opt("codestral-latest",      "Codestral"),
+                opt("mistral-nemo",          "Mistral Nemo 12B"),
+            ]
+
+        return []
 
     async def _ask_permission(self, tool_name: str, reason: str) -> bool:
         async with self._permission_lock:
