@@ -406,6 +406,9 @@ class Settings(BaseModel):
     passes: int = 1
     verbose: bool = False
 
+    # Language
+    language: str = ""  # e.g. "Korean", "Japanese", "Chinese" — AI responds in this language
+
     def merged_profiles(self) -> dict[str, ProviderProfile]:
         """Return the saved profiles merged over the built-in catalog."""
         merged = default_provider_profiles()

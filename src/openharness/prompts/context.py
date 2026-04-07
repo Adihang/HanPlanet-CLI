@@ -40,6 +40,13 @@ def build_runtime_system_prompt(
     """Build the runtime system prompt with project instructions and memory."""
     sections = [build_system_prompt(custom_prompt=settings.system_prompt, cwd=str(cwd))]
 
+    if settings.language:
+        sections.append(
+            f"# Language Instruction\n"
+            f"Always respond in **{settings.language}**, regardless of what language the user writes in. "
+            f"All explanations, code comments, and messages must be in {settings.language}."
+        )
+
     if settings.fast_mode:
         sections.append(
             "# Session Mode\nFast mode is enabled. Prefer concise replies, minimal tool use, and quicker progress over exhaustive exploration."

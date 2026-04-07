@@ -669,23 +669,181 @@ def create_default_command_registry() -> CommandRegistry:
         return CommandResult(message="\n".join(lines))
 
     async def _config_handler(args: str, context: CommandContext) -> CommandResult:
-        del context
+        import sys
+
         settings = load_settings()
         tokens = args.split(maxsplit=2)
-        if not tokens or tokens[0] == "show":
+
+        # Explicit argument — handle directly (non-interactive)
+        if tokens and tokens[0] not in ("show", ""):
+            if tokens[0] == "show":
+                return CommandResult(message=settings.model_dump_json(indent=2))
+            if tokens[0] == "set" and len(tokens) == 3:
+                key, value = tokens[1], tokens[2]
+                if key not in Settings.model_fields:
+                    return CommandResult(message=f"Unknown config key: {key}")
+                try:
+                    coerced = _coerce_setting_value(settings, key, value)
+                except ValueError as exc:
+                    return CommandResult(message=str(exc))
+                setattr(settings, key, coerced)
+                save_settings(settings)
+                return CommandResult(message=f"Updated {key}", refresh_runtime=True)
+            return CommandResult(message="Usage: /config [show|set KEY VALUE]")
+
+        # Interactive menu
+        is_real_tty = (
+            sys.stdin.isatty()
+            and sys.stdout.isatty()
+            and sys.stdin is sys.__stdin__
+            and sys.stdout is sys.__stdout__
+        )
+        if not is_real_tty:
             return CommandResult(message=settings.model_dump_json(indent=2))
-        if tokens[0] == "set" and len(tokens) == 3:
-            key, value = tokens[1], tokens[2]
-            if key not in Settings.model_fields:
-                return CommandResult(message=f"Unknown config key: {key}")
-            try:
-                coerced = _coerce_setting_value(settings, key, value)
-            except ValueError as exc:
-                return CommandResult(message=str(exc))
-            setattr(settings, key, coerced)
-            save_settings(settings)
-            return CommandResult(message=f"Updated {key}")
-        return CommandResult(message="Usage: /config [show|set KEY VALUE]")
+
+        try:
+            import asyncio
+            import questionary
+
+            _LANGUAGES = [
+                ("한국어 (Korean)", "Korean"),
+                ("English", "English"),
+                ("日本語 (Japanese)", "Japanese"),
+                ("中文 (Chinese)", "Chinese"),
+                ("Español (Spanish)", "Spanish"),
+                ("Français (French)", "French"),
+                ("Deutsch (German)", "German"),
+                ("없음 (언어 설정 해제)", ""),
+            ]
+
+            _EFFORTS = [
+                ("low — 빠른 응답, 얕은 추론", "low"),
+                ("medium — 균형 (기본값)", "medium"),
+                ("high — 느리지만 깊은 추론", "high"),
+            ]
+
+            _MENU_ITEMS = [
+                ("language",   "🌐 응답 언어 설정"),
+                ("model",      "🤖 모델 변경"),
+                ("effort",     "⚡ 추론 깊이 (effort)"),
+                ("fast_mode",  "🚀 빠른 모드 (fast_mode)"),
+                ("vim_mode",   "⌨️  Vim 모드"),
+                ("max_turns",  "🔄 최대 턴 수"),
+                ("show",       "📄 전체 설정 보기"),
+            ]
+
+            def _run_menu() -> str | None:
+                current_lang = settings.language or "없음"
+                current_model = settings.model
+                hints = {
+                    "language":  f"현재: {current_lang}",
+                    "model":     f"현재: {current_model}",
+                    "effort":    f"현재: {settings.effort}",
+                    "fast_mode": f"현재: {'켜짐' if settings.fast_mode else '꺼짐'}",
+                    "vim_mode":  f"현재: {'켜짐' if settings.vim_mode else '꺼짐'}",
+                    "max_turns": f"현재: {settings.max_turns}",
+                    "show":      "",
+                }
+                choices = [
+                    questionary.Choice(
+                        title=[("", f"{label}  "), ("fg:#888888", hints[key])],
+                        value=key,
+                    )
+                    for key, label in _MENU_ITEMS
+                ]
+                return questionary.select("설정 항목 선택:", choices=choices).ask()
+
+            selected = await asyncio.to_thread(_run_menu)
+            if selected is None:
+                return CommandResult(message="취소됐습니다.")
+
+            if selected == "show":
+                return CommandResult(message=settings.model_dump_json(indent=2))
+
+            # ── language ──────────────────────────────────────────────
+            if selected == "language":
+                def _pick_lang() -> str | None:
+                    current = settings.language or ""
+                    choices = [
+                        questionary.Choice(title=label, value=val)
+                        for label, val in _LANGUAGES
+                    ]
+                    return questionary.select(
+                        "응답 언어를 선택하세요:",
+                        choices=choices,
+                        default=current if current else None,
+                    ).ask()
+
+                lang = await asyncio.to_thread(_pick_lang)
+                if lang is None:
+                    return CommandResult(message="취소됐습니다.")
+                settings.language = lang
+                save_settings(settings)
+                label = lang if lang else "없음 (해제됨)"
+                return CommandResult(message=f"응답 언어 → {label}", refresh_runtime=True)
+
+            # ── effort ────────────────────────────────────────────────
+            if selected == "effort":
+                def _pick_effort() -> str | None:
+                    choices = [
+                        questionary.Choice(title=label, value=val)
+                        for label, val in _EFFORTS
+                    ]
+                    return questionary.select(
+                        "추론 깊이 선택:", choices=choices, default=settings.effort
+                    ).ask()
+
+                effort = await asyncio.to_thread(_pick_effort)
+                if effort is None:
+                    return CommandResult(message="취소됐습니다.")
+                settings.effort = effort
+                save_settings(settings)
+                return CommandResult(message=f"effort → {effort}", refresh_runtime=True)
+
+            # ── boolean toggles ───────────────────────────────────────
+            if selected in ("fast_mode", "vim_mode"):
+                current_val = getattr(settings, selected)
+                new_val = not current_val
+                setattr(settings, selected, new_val)
+                save_settings(settings)
+                state = "켜짐" if new_val else "꺼짐"
+                return CommandResult(message=f"{selected} → {state}", refresh_runtime=True)
+
+            # ── model (text input) ────────────────────────────────────
+            if selected == "model":
+                def _input_model() -> str | None:
+                    return questionary.text(
+                        "모델명 입력:", default=settings.model
+                    ).ask()
+
+                model = await asyncio.to_thread(_input_model)
+                if model is None or not model.strip():
+                    return CommandResult(message="취소됐습니다.")
+                settings.model = model.strip()
+                save_settings(settings)
+                return CommandResult(message=f"model → {settings.model}", refresh_runtime=True)
+
+            # ── max_turns (text input) ────────────────────────────────
+            if selected == "max_turns":
+                def _input_turns() -> str | None:
+                    return questionary.text(
+                        "최대 턴 수 입력:", default=str(settings.max_turns)
+                    ).ask()
+
+                turns_str = await asyncio.to_thread(_input_turns)
+                if turns_str is None:
+                    return CommandResult(message="취소됐습니다.")
+                try:
+                    settings.max_turns = int(turns_str)
+                except ValueError:
+                    return CommandResult(message="숫자를 입력해주세요.")
+                save_settings(settings)
+                return CommandResult(message=f"max_turns → {settings.max_turns}", refresh_runtime=True)
+
+        except ImportError:
+            return CommandResult(message=settings.model_dump_json(indent=2))
+
+        return CommandResult(message="설정이 완료됐습니다.", refresh_runtime=True)
 
     async def _login_handler(args: str, context: CommandContext) -> CommandResult:
         del context
