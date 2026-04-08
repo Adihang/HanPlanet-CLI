@@ -687,6 +687,35 @@ class ReactBackendHost:
             )
             return
 
+        if command == "model-for-hanplanet":
+            from openharness.auth.storage import load_credential
+            existing_key = load_credential("hanplanet", "api_key") or ""
+            if existing_key:
+                models = await self._fetch_hanplanet_models(existing_key)
+                if models:
+                    hp_current = display_model_setting(active_profile)
+                    options = [
+                        {"value": m, "label": m, "description": "🏔 Hanplanet", "active": m == hp_current}
+                        for m in models
+                    ]
+                    await self._emit(BackendEvent(
+                        type="select_request",
+                        modal={"kind": "select", "title": "🏔 Hanplanet 모델", "command": "model"},
+                        select_options=options,
+                    ))
+                    return
+            # No saved key — show auth method picker
+            options = [
+                {"value": "oauth",  "label": "🌐  브라우저로 로그인 (OAuth)", "description": "hanplanet.com 계정으로 자동 인증", "active": False},
+                {"value": "apikey", "label": "🔑  API 키 직접 입력",          "description": "hanplanet.com에서 발급받은 키",    "active": False},
+            ]
+            await self._emit(BackendEvent(
+                type="select_request",
+                modal={"kind": "select", "title": "🏔 Hanplanet 인증 방법 선택", "command": "hanplanet-auth"},
+                select_options=options,
+            ))
+            return
+
         if command.startswith("model-for-"):
             group = command[len("model-for-"):]
             options = self._model_options_for_group(group, current_model, active_profile)
@@ -910,35 +939,6 @@ class ReactBackendHost:
                     select_options=options,
                 )
             )
-            return
-
-        if command == "model-for-hanplanet":
-            from openharness.auth.storage import load_credential
-            existing_key = load_credential("hanplanet", "api_key") or ""
-            if existing_key:
-                models = await self._fetch_hanplanet_models(existing_key)
-                if models:
-                    hp_current = display_model_setting(active_profile)
-                    options = [
-                        {"value": m, "label": m, "description": "🏔 Hanplanet", "active": m == hp_current}
-                        for m in models
-                    ]
-                    await self._emit(BackendEvent(
-                        type="select_request",
-                        modal={"kind": "select", "title": "🏔 Hanplanet 모델", "command": "model"},
-                        select_options=options,
-                    ))
-                    return
-            # No saved key — show auth method picker
-            options = [
-                {"value": "oauth",  "label": "🌐  브라우저로 로그인 (OAuth)", "description": "hanplanet.com 계정으로 자동 인증", "active": False},
-                {"value": "apikey", "label": "🔑  API 키 직접 입력",          "description": "hanplanet.com에서 발급받은 키",    "active": False},
-            ]
-            await self._emit(BackendEvent(
-                type="select_request",
-                modal={"kind": "select", "title": "🏔 Hanplanet 인증 방법 선택", "command": "hanplanet-auth"},
-                select_options=options,
-            ))
             return
 
         if command == "agents":
