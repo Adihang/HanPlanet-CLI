@@ -349,6 +349,15 @@ class ReactBackendHost:
                 return True
             # "list" falls through to _build_select_command_line
 
+        # /provider hanplanet → trigger auth flow if no credential stored
+        if command == "provider" and selected == "hanplanet":
+            settings = self._bundle.current_settings()
+            cred = AuthManager(settings).load_credential("hanplanet")
+            if not cred:
+                await self._handle_select_command("model-for-hanplanet")
+                return True
+            # credential exists — fall through to normal /provider hanplanet
+
         line = self._build_select_command_line(command, selected)
         if line is None:
             await self._emit(BackendEvent(type="error", message=f"Unknown select command: {command_name}"))
