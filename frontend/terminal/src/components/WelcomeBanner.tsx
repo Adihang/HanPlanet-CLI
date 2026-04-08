@@ -25,7 +25,7 @@ export function WelcomeBanner(): React.JSX.Element {
 				))}
 				<Text> </Text>
 				<Text>
-					<Text dimColor> An AI-powered coding assistant</Text>
+					<Text dimColor> www.hanplanet.com</Text>
 					<Text dimColor>{'  '}v{VERSION}</Text>
 				</Text>
 				<Text> </Text>
