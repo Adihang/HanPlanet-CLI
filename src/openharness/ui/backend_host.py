@@ -1052,10 +1052,15 @@ class ReactBackendHost:
             allowed = getattr(active_profile, "allowed_models", None)
             if allowed:
                 return [opt(m, "Allowed model") for m in allowed]
-            # Try to query Ollama /api/tags
+
+            import httpx
+            from openharness.config.settings import load_settings
+
+            settings = load_settings()
+            base_url = (getattr(active_profile, "base_url", None) or "http://localhost:11434/v1").rstrip("/")
+
+            # 1) Try native Ollama /api/tags (local only)
             try:
-                import httpx
-                base_url = (getattr(active_profile, "base_url", None) or "http://localhost:11434/v1").rstrip("/")
                 api_base = base_url[:-3] if base_url.endswith("/v1") else base_url
                 resp = httpx.get(f"{api_base}/api/tags", timeout=3.0)
                 models = [m["name"] for m in resp.json().get("models", [])]
@@ -1063,6 +1068,20 @@ class ReactBackendHost:
                     return [opt(m, "Local Ollama model") for m in models]
             except Exception:
                 pass
+
+            # 2) Try OpenAI-compatible /v1/models (works for remote proxies too)
+            try:
+                api_key = settings.resolve_auth().value or "ollama"
+                headers = {"Authorization": f"Bearer {api_key}"}
+                resp = httpx.get(f"{base_url}/models", headers=headers, timeout=5.0)
+                body = resp.json()
+                data = body.get("data") or [{"id": m} for m in body.get("models", [])]
+                models = [m["id"] for m in data if m.get("id")]
+                if models:
+                    return [opt(m, "Remote model") for m in models]
+            except Exception:
+                pass
+
             # Fallback suggestions
             return [
                 opt("llama3.2",             "Meta Llama 3.2"),
