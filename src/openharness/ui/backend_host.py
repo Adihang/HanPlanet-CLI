@@ -1056,22 +1056,18 @@ class ReactBackendHost:
             base_url = (getattr(active_profile, "base_url", None) or "http://localhost:11434/v1").rstrip("/")
 
             options: list[dict[str, object]] = []
-            seen: set[str] = set()
 
             # 1) Local Ollama /api/tags → prefix "local/<model>"
             try:
                 resp = httpx.get("http://localhost:11434/api/tags", timeout=3.0)
                 for m in resp.json().get("models", []):
                     name = m["name"]
-                    value = f"local/{name}"
-                    if value not in seen:
-                        seen.add(value)
-                        options.append({
-                            "value": name,
-                            "label": f"local/{name}",
-                            "description": "로컬 Ollama",
-                            "active": name == current_model,
-                        })
+                    options.append({
+                        "value": name,
+                        "label": f"local/{name}",
+                        "description": "로컬 Ollama",
+                        "active": name == current_model,
+                    })
             except Exception:
                 pass
 
@@ -1087,15 +1083,12 @@ class ReactBackendHost:
                     name = m.get("id", "")
                     if not name:
                         continue
-                    value = f"remote/{name}"
-                    if value not in seen:
-                        seen.add(value)
-                        options.append({
-                            "value": name,
-                            "label": f"{host}/{name}",
-                            "description": f"원격 프록시 ({host})",
-                            "active": name == current_model,
-                        })
+                    options.append({
+                        "value": name,
+                        "label": f"{host}/{name}",
+                        "description": f"원격 프록시 ({host})",
+                        "active": name == current_model,
+                    })
             except Exception:
                 pass
 
