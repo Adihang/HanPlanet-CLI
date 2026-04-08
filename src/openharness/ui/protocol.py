@@ -82,6 +82,7 @@ class BackendEvent(BaseModel):
         "plan_mode_change",
         "swarm_status",
         "error",
+        "info",
         "shutdown",
     ]
     select_options: list[dict[str, Any]] | None = None

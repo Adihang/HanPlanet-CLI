@@ -233,6 +233,10 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			setBusy(false);
 			return;
 		}
+		if (event.type === 'info') {
+			setTranscript((items) => [...items, {role: 'system', text: event.message ?? ''}]);
+			return;
+		}
 		if (event.type === 'todo_update') {
 			if (event.todo_markdown != null) {
 				setTodoMarkdown(event.todo_markdown);
