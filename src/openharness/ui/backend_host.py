@@ -754,7 +754,7 @@ class ReactBackendHost:
             vim_state = "On" if state.vim_enabled else "Off"
             options = [
                 {"value": "language", "label": "🌐  Response Language",  "description": f"Current: {settings.language or 'None'}",  "active": False},
-                {"value": "model-group", "label": "🤖  Model",            "description": f"Current: {current_model}",                "active": False},
+                {"value": "model",       "label": "🤖  Model",            "description": f"Current: {current_model}",                "active": False},
                 {"value": "effort",   "label": "⚡  Reasoning Effort",   "description": f"Current: {settings.effort}",              "active": False},
                 {"value": "fast",     "label": "🚀  Fast Mode",          "description": f"Current: {fast_state}",                   "active": False},
                 {"value": "vim",      "label": "⌨️   Vim Mode",          "description": f"Current: {vim_state}",                    "active": False},
