@@ -351,8 +351,8 @@ class ReactBackendHost:
 
         # /provider hanplanet → trigger auth flow if no credential stored
         if command == "provider" and selected == "hanplanet":
-            settings = self._bundle.current_settings()
-            cred = AuthManager(settings).load_credential("hanplanet")
+            from openharness.auth.storage import load_credential
+            cred = load_credential("hanplanet", "api_key")
             if not cred:
                 await self._handle_select_command("model-for-hanplanet")
                 return True
