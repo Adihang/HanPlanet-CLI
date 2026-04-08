@@ -1048,39 +1048,59 @@ class ReactBackendHost:
             ]
 
         if group == "ollama":
-            # If profile has an explicit allowed list, use it
-            allowed = getattr(active_profile, "allowed_models", None)
-            if allowed:
-                return [opt(m, "Allowed model") for m in allowed]
-
             import httpx
             from openharness.config.settings import load_settings
+            from urllib.parse import urlparse
 
             settings = load_settings()
             base_url = (getattr(active_profile, "base_url", None) or "http://localhost:11434/v1").rstrip("/")
 
-            # 1) Try native Ollama /api/tags (local only)
+            options: list[dict[str, object]] = []
+            seen: set[str] = set()
+
+            # 1) Local Ollama /api/tags → prefix "local/<model>"
             try:
-                api_base = base_url[:-3] if base_url.endswith("/v1") else base_url
-                resp = httpx.get(f"{api_base}/api/tags", timeout=3.0)
-                models = [m["name"] for m in resp.json().get("models", [])]
-                if models:
-                    return [opt(m, "Local Ollama model") for m in models]
+                resp = httpx.get("http://localhost:11434/api/tags", timeout=3.0)
+                for m in resp.json().get("models", []):
+                    name = m["name"]
+                    value = f"local/{name}"
+                    if value not in seen:
+                        seen.add(value)
+                        options.append({
+                            "value": name,
+                            "label": f"local/{name}",
+                            "description": "로컬 Ollama",
+                            "active": name == current_model,
+                        })
             except Exception:
                 pass
 
-            # 2) Try OpenAI-compatible /v1/models (works for remote proxies too)
+            # 2) Remote proxy /v1/models → prefix "<host>/<model>"
             try:
                 api_key = settings.resolve_auth().value or "ollama"
                 headers = {"Authorization": f"Bearer {api_key}"}
                 resp = httpx.get(f"{base_url}/models", headers=headers, timeout=5.0)
                 body = resp.json()
                 data = body.get("data") or [{"id": m} for m in body.get("models", [])]
-                models = [m["id"] for m in data if m.get("id")]
-                if models:
-                    return [opt(m, "Remote model") for m in models]
+                host = urlparse(base_url).hostname or base_url
+                for m in data:
+                    name = m.get("id", "")
+                    if not name:
+                        continue
+                    value = f"remote/{name}"
+                    if value not in seen:
+                        seen.add(value)
+                        options.append({
+                            "value": name,
+                            "label": f"{host}/{name}",
+                            "description": f"원격 프록시 ({host})",
+                            "active": name == current_model,
+                        })
             except Exception:
                 pass
+
+            if options:
+                return options
 
             # Fallback suggestions
             return [
