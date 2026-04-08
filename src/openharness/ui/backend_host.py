@@ -1221,7 +1221,7 @@ class ReactBackendHost:
         import webbrowser
         from urllib.parse import urlencode, urlparse, parse_qs
 
-        HANPLANET_BASE = "https://hanplanet.com"
+        HANPLANET_BASE = "https://www.hanplanet.com"
         CLIENT_ID      = "openharness-cli"
         REDIRECT_PORT  = 7777
         REDIRECT_URI   = f"http://localhost:{REDIRECT_PORT}/callback"
@@ -1256,7 +1256,12 @@ class ReactBackendHost:
                 first_line = data.decode(errors="ignore").split("\n")[0]
                 parts = first_line.split(" ")
                 if len(parts) >= 2:
-                    params = parse_qs(urlparse(parts[1]).query)
+                    parsed = urlparse(parts[1])
+                    # /callback 이외의 요청(favicon.ico 등)은 무시
+                    if parsed.path != "/callback":
+                        writer.write(b"HTTP/1.1 204 No Content\r\n\r\n")
+                        return
+                    params = parse_qs(parsed.query)
                     code        = (params.get("code")  or [None])[0]
                     recv_state  = (params.get("state") or [None])[0]
                     if recv_state == state and code and not code_future.done():
@@ -1269,10 +1274,11 @@ class ReactBackendHost:
                         ).encode("utf-8")
                         writer.write(body_html)
                         code_future.set_result(code)
+                    elif not code_future.done():
+                        writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\nInvalid state")
+                        code_future.set_exception(Exception("Invalid OAuth callback"))
                     else:
                         writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\nInvalid state")
-                        if not code_future.done():
-                            code_future.set_exception(Exception("Invalid OAuth callback"))
             except Exception as exc:
                 if not code_future.done():
                     code_future.set_exception(exc)
@@ -1294,15 +1300,16 @@ class ReactBackendHost:
         await self._emit(BackendEvent(
             type="oauth_pending",
             message="브라우저를 열어 Hanplanet 로그인 페이지로 이동합니다…",
-            timeout_seconds=120,
+            timeout_seconds=300,
         ))
         webbrowser.open(auth_url)
 
         try:
             async with server:
-                code = await asyncio.wait_for(code_future, timeout=120)
+                code = await asyncio.wait_for(code_future, timeout=300)
+                await asyncio.sleep(2)  # favicon.ico 등 후속 요청 처리 후 서버 닫기
         except asyncio.TimeoutError:
-            await self._emit(BackendEvent(type="error", message="인증 시간 초과 (120초). 다시 시도해주세요."))
+            await self._emit(BackendEvent(type="error", message="인증 시간 초과 (300초). 다시 시도해주세요."))
             await self._emit(BackendEvent(type="line_complete"))
             return
         except Exception as exc:
