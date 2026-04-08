@@ -104,7 +104,7 @@ class ReactBackendHost:
             BackendEvent.ready(
                 self._bundle.app_state.get(),
                 get_task_manager().list_tasks(),
-                [f"/{command.name}" for command in self._bundle.commands.list_commands()],
+                _sorted_command_infos(self._bundle.commands.list_commands()),
             )
         )
         await self._emit(self._status_snapshot())
@@ -1447,6 +1447,34 @@ class ReactBackendHost:
                 return
             sys.stdout.write(payload)
             sys.stdout.flush()
+
+
+_COMMAND_PRIORITY = [
+    "clear", "config", "model", "provider", "memory", "help",
+    "continue", "rewind", "tasks", "agents", "skills", "plugin",
+    "theme", "language", "permissions", "plan",
+    "compact", "summary", "commit", "diff", "branch",
+    "status", "hooks", "mcp", "files",
+    "cost", "usage", "stats",
+    "login", "logout",
+    "export", "share", "copy", "feedback",
+    "session", "resume", "tag",
+    "init", "bridge",
+    "fast", "effort", "passes", "turns",
+    "vim", "voice", "output-style", "keybindings",
+    "version", "context",
+    "doctor", "onboarding", "release-notes", "upgrade",
+    "issue", "pr_comments",
+    "privacy-settings", "rate-limit-options",
+    "reload-plugins",
+]
+
+
+def _sorted_command_infos(commands: list) -> list[dict[str, str]]:
+    """Return commands as {name, description} dicts sorted by usage frequency."""
+    priority = {name: i for i, name in enumerate(_COMMAND_PRIORITY)}
+    sorted_cmds = sorted(commands, key=lambda c: priority.get(c.name, len(_COMMAND_PRIORITY)))
+    return [{"name": f"/{c.name}", "description": c.description} for c in sorted_cmds]
 
 
 async def run_backend_host(

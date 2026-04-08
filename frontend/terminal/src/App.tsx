@@ -104,9 +104,9 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	const commandHints = useMemo(() => {
 		const value = input.trim();
 		if (!value.startsWith('/')) {
-			return [] as string[];
+			return [];
 		}
-		return session.commands.filter((cmd) => cmd.startsWith(value)).slice(0, 10);
+		return session.commands.filter((cmd) => cmd.name.startsWith(value)).slice(0, 12);
 	}, [session.commands, input]);
 
 	const showPicker = commandHints.length > 0 && !session.busy && !session.modal && !selectModal;
@@ -288,8 +288,8 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				const selected = commandHints[pickerIndex];
 				if (selected) {
 					setInput('');
-					if (!handleCommand(selected)) {
-						onSubmit(selected);
+					if (!handleCommand(selected.name)) {
+						onSubmit(selected.name);
 					}
 				}
 				return;
@@ -297,7 +297,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			if (key.tab) {
 				const selected = commandHints[pickerIndex];
 				if (selected) {
-					setInput(selected + ' ');
+					setInput(selected.name + ' ');
 				}
 				return;
 			}

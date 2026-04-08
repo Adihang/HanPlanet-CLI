@@ -1,11 +1,13 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 
+import type {CommandInfo} from '../types.js';
+
 export function CommandPicker({
 	hints,
 	selectedIndex,
 }: {
-	hints: string[];
+	hints: CommandInfo[];
 	selectedIndex: number;
 }): React.JSX.Element | null {
 	if (hints.length === 0) {
@@ -18,12 +20,16 @@ export function CommandPicker({
 			{hints.map((hint, i) => {
 				const isSelected = i === selectedIndex;
 				return (
-					<Box key={hint}>
-						<Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-							{isSelected ? '\u276F ' : '  '}
-							{hint}
-						</Text>
-						{isSelected ? <Text dimColor> [enter]</Text> : null}
+					<Box key={hint.name} justifyContent="space-between">
+						<Box>
+							<Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+								{isSelected ? '\u276F ' : '  '}
+								{hint.name}
+							</Text>
+						</Box>
+						<Box>
+							<Text dimColor>  {hint.description}</Text>
+						</Box>
 					</Box>
 				);
 			})}

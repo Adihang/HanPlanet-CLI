@@ -5,6 +5,7 @@ import readline from 'node:readline';
 import type {
 	BackendEvent,
 	BridgeSessionSnapshot,
+	CommandInfo,
 	FrontendConfig,
 	McpServerSnapshot,
 	SelectOptionPayload,
@@ -23,7 +24,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	const [assistantBuffer, setAssistantBuffer] = useState('');
 	const [status, setStatus] = useState<Record<string, unknown>>({});
 	const [tasks, setTasks] = useState<TaskSnapshot[]>([]);
-	const [commands, setCommands] = useState<string[]>([]);
+	const [commands, setCommands] = useState<CommandInfo[]>([]);
 	const [mcpServers, setMcpServers] = useState<McpServerSnapshot[]>([]);
 	const [bridgeSessions, setBridgeSessions] = useState<BridgeSessionSnapshot[]>([]);
 	const [modal, setModal] = useState<Record<string, unknown> | null>(null);

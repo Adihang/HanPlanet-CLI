@@ -91,7 +91,7 @@ class BackendEvent(BaseModel):
     tasks: list[TaskSnapshot] | None = None
     mcp_servers: list[dict[str, Any]] | None = None
     bridge_sessions: list[dict[str, Any]] | None = None
-    commands: list[str] | None = None
+    commands: list[dict[str, str]] | None = None
     modal: dict[str, Any] | None = None
     tool_name: str | None = None
     tool_input: dict[str, Any] | None = None
@@ -108,7 +108,7 @@ class BackendEvent(BaseModel):
         cls,
         state: AppState,
         tasks: list[TaskRecord],
-        commands: list[str],
+        commands: list[dict[str, str]],
     ) -> "BackendEvent":
         return cls(
             type="ready",

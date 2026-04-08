@@ -64,6 +64,11 @@ export type SwarmNotificationSnapshot = {
 	timestamp: number;
 };
 
+export type CommandInfo = {
+	name: string;
+	description: string;
+};
+
 export type BackendEvent = {
 	type: string;
 	message?: string | null;
@@ -72,7 +77,7 @@ export type BackendEvent = {
 	tasks?: TaskSnapshot[] | null;
 	mcp_servers?: McpServerSnapshot[] | null;
 	bridge_sessions?: BridgeSessionSnapshot[] | null;
-	commands?: string[] | null;
+	commands?: CommandInfo[] | null;
 	modal?: Record<string, unknown> | null;
 	select_options?: SelectOptionPayload[] | null;
 	tool_name?: string | null;
