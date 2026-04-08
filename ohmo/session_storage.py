@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import time
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,16 @@ def get_session_dir(workspace: str | Path | None = None) -> Path:
     return session_dir
 
 
+def _session_key_token(session_key: str) -> str:
+    return hashlib.sha1(session_key.encode("utf-8")).hexdigest()[:12]
+
+
+def _session_key_latest_path(workspace: str | Path | None, session_key: str) -> Path:
+    session_dir = get_session_dir(workspace)
+    token = _session_key_token(session_key)
+    return session_dir / f"latest-{token}.json"
+
+
 def save_session_snapshot(
     *,
     cwd: str | Path,
@@ -31,6 +42,7 @@ def save_session_snapshot(
     messages: list[ConversationMessage],
     usage: UsageSnapshot,
     session_id: str | None = None,
+    session_key: str | None = None,
 ) -> Path:
     """Persist the latest ohmo session snapshot."""
     session_dir = get_session_dir(workspace)
@@ -45,6 +57,7 @@ def save_session_snapshot(
     payload = {
         "app": "ohmo",
         "session_id": sid,
+        "session_key": session_key,
         "cwd": str(Path(cwd).resolve()),
         "model": model,
         "system_prompt": system_prompt,
@@ -57,6 +70,8 @@ def save_session_snapshot(
     data = json.dumps(payload, indent=2) + "\n"
     latest_path = session_dir / "latest.json"
     latest_path.write_text(data, encoding="utf-8")
+    if session_key:
+        _session_key_latest_path(workspace, session_key).write_text(data, encoding="utf-8")
     session_path = session_dir / f"session-{sid}.json"
     session_path.write_text(data, encoding="utf-8")
     return latest_path
@@ -67,6 +82,13 @@ def load_latest(workspace: str | Path | None = None) -> dict[str, Any] | None:
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_latest_for_session_key(workspace: str | Path | None, session_key: str) -> dict[str, Any] | None:
+    path = _session_key_latest_path(workspace, session_key)
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return None
 
 
 def list_snapshots(workspace: str | Path | None = None, limit: int = 20) -> list[dict[str, Any]]:
@@ -136,6 +158,7 @@ class OhmoSessionBackend(SessionBackend):
         messages: list[ConversationMessage],
         usage: UsageSnapshot,
         session_id: str | None = None,
+        session_key: str | None = None,
     ) -> Path:
         return save_session_snapshot(
             cwd=cwd,
@@ -145,6 +168,7 @@ class OhmoSessionBackend(SessionBackend):
             messages=messages,
             usage=usage,
             session_id=session_id,
+            session_key=session_key,
         )
 
     def load_latest(self, cwd: str | Path) -> dict[str, Any] | None:
@@ -155,6 +179,9 @@ class OhmoSessionBackend(SessionBackend):
 
     def load_by_id(self, cwd: str | Path, session_id: str) -> dict[str, Any] | None:
         return load_by_id(self._workspace, session_id)
+
+    def load_latest_for_session_key(self, session_key: str) -> dict[str, Any] | None:
+        return load_latest_for_session_key(self._workspace, session_key)
 
     def export_markdown(
         self,

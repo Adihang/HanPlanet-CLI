@@ -25,6 +25,7 @@ async def run_repl(
     api_client: SupportsStreamingMessages | None = None,
     backend_only: bool = False,
     restore_messages: list[dict] | None = None,
+    permission_mode: str | None = None,
 ) -> None:
     """Run the default OpenHarness interactive application (React TUI)."""
     if backend_only:
@@ -39,6 +40,7 @@ async def run_repl(
             api_client=api_client,
             restore_messages=restore_messages,
             enforce_max_turns=max_turns is not None,
+            permission_mode=permission_mode,
         )
         return
 
@@ -51,6 +53,7 @@ async def run_repl(
         system_prompt=system_prompt,
         api_key=api_key,
         api_format=api_format,
+        permission_mode=permission_mode,
     )
     if exit_code != 0:
         raise SystemExit(exit_code)
@@ -89,6 +92,7 @@ async def run_print_mode(
 
     bundle = await build_runtime(
         prompt=prompt,
+        cwd=cwd,
         model=model,
         max_turns=max_turns,
         base_url=base_url,

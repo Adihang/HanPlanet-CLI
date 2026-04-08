@@ -181,6 +181,14 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             auth_source="copilot_oauth",
             default_model="gpt-5.4",
         ),
+        "moonshot": ProviderProfile(
+            label="Moonshot (Kimi)",
+            provider="moonshot",
+            api_format="openai",
+            auth_source="moonshot_api_key",
+            default_model="kimi-k2.5",
+            base_url="https://api.moonshot.cn/v1",
+        ),
     }
 
 
@@ -266,6 +274,7 @@ def auth_source_provider_name(auth_source: str) -> str:
         "dashscope_api_key": "dashscope",
         "bedrock_api_key": "bedrock",
         "vertex_api_key": "vertex",
+        "moonshot_api_key": "moonshot",
     }
     return mapping.get(auth_source, auth_source)
 
@@ -305,6 +314,8 @@ def default_auth_source_for_provider(provider: str, api_format: str | None = Non
         return "vertex_api_key"
     if provider in {"ollama", "vllm"}:
         return "no_auth"
+    if provider == "moonshot":
+        return "moonshot_api_key"
     if provider == "openai" or api_format == "openai":
         return "openai_api_key"
     return "anthropic_api_key"
@@ -412,16 +423,16 @@ class Settings(BaseModel):
     def merged_profiles(self) -> dict[str, ProviderProfile]:
         """Return the saved profiles merged over the built-in catalog."""
         merged = default_provider_profiles()
-        merged.update(
-            {
-                name: (
-                    profile.model_copy(deep=True)
-                    if isinstance(profile, ProviderProfile)
-                    else ProviderProfile.model_validate(profile)
-                )
-                for name, profile in self.profiles.items()
-            }
-        )
+        for name, raw_profile in self.profiles.items():
+            profile = (
+                raw_profile.model_copy(deep=True)
+                if isinstance(raw_profile, ProviderProfile)
+                else ProviderProfile.model_validate(raw_profile)
+            )
+            builtin = merged.get(name)
+            if builtin is not None and profile.base_url is None and builtin.base_url is not None:
+                profile = profile.model_copy(update={"base_url": builtin.base_url})
+            merged[name] = profile
         return merged
 
     def resolve_profile(self, name: str | None = None) -> tuple[str, ProviderProfile]:
@@ -540,7 +551,7 @@ class Settings(BaseModel):
 
     def resolve_auth(self) -> ResolvedAuth:
         """Resolve auth for the current provider, including subscription bridges."""
-        _, profile = self.resolve_profile()
+        profile_name, profile = self.resolve_profile()
         provider = profile.provider.strip()
         auth_source = profile.auth_source.strip() or default_auth_source_for_provider(provider, profile.api_format)
         if auth_source == "no_auth":
@@ -592,34 +603,30 @@ class Settings(BaseModel):
             )
 
         storage_provider = auth_source_provider_name(auth_source)
-        explicit_key = "" if profile.credential_slot else self.api_key
-        if explicit_key:
-            return ResolvedAuth(
-                provider=provider or storage_provider,
-                auth_kind="api_key",
-                value=explicit_key,
-                source="settings_or_env",
-                state="configured",
-            )
 
         from openharness.auth.storage import load_credential
 
-        storage_provider = credential_storage_provider_name(self.resolve_profile()[0], profile)
         if profile.credential_slot:
-            stored = load_credential(storage_provider, "api_key")
-            if stored:
+            scoped_storage_provider = f"profile:{profile.credential_slot}"
+            scoped = load_credential(scoped_storage_provider, "api_key", use_keyring=False)
+            if scoped is None:
+                scoped = load_credential(scoped_storage_provider, "api_key")
+            if scoped:
                 return ResolvedAuth(
                     provider=provider or auth_source_provider_name(auth_source),
                     auth_kind="api_key",
-                    value=stored,
-                    source=f"file:{storage_provider}",
+                    value=scoped,
+                    source=f"file:{scoped_storage_provider}",
                     state="configured",
                 )
+
+        storage_provider = credential_storage_provider_name(profile_name, profile)
 
         env_var = {
             "anthropic_api_key": "ANTHROPIC_API_KEY",
             "openai_api_key": "OPENAI_API_KEY",
             "dashscope_api_key": "DASHSCOPE_API_KEY",
+            "moonshot_api_key": "MOONSHOT_API_KEY",
         }.get(auth_source)
         if env_var:
             env_value = os.environ.get(env_var, "")
@@ -631,6 +638,16 @@ class Settings(BaseModel):
                     source=f"env:{env_var}",
                     state="configured",
                 )
+
+        explicit_key = "" if profile.credential_slot else self.api_key
+        if explicit_key:
+            return ResolvedAuth(
+                provider=provider or storage_provider,
+                auth_kind="api_key",
+                value=explicit_key,
+                source="settings_or_env",
+                state="configured",
+            )
 
         stored = load_credential(storage_provider, "api_key")
         if stored:
@@ -654,8 +671,11 @@ class Settings(BaseModel):
         if not updates:
             return merged
         profile_keys = {"model", "base_url", "api_format", "provider", "api_key", "active_profile", "profiles"}
-        if profile_keys.isdisjoint(updates):
+        profile_updates = profile_keys.intersection(updates)
+        if not profile_updates:
             return merged
+        if profile_updates.issubset({"active_profile"}):
+            return merged.materialize_active_profile()
         return merged.sync_active_profile_from_flat_fields().materialize_active_profile()
 
 
@@ -666,7 +686,11 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     if model:
         updates["model"] = model
 
-    base_url = os.environ.get("ANTHROPIC_BASE_URL") or os.environ.get("OPENHARNESS_BASE_URL")
+    base_url = (
+        os.environ.get("ANTHROPIC_BASE_URL")
+        or os.environ.get("OPENAI_BASE_URL")
+        or os.environ.get("OPENHARNESS_BASE_URL")
+    )
     if base_url:
         updates["base_url"] = base_url
 

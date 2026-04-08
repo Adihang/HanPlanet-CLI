@@ -46,6 +46,7 @@ class TestSettings:
 
     def test_resolve_api_key_missing_raises(self, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         s = Settings()
         with pytest.raises(ValueError, match="No API key found"):
             s.resolve_api_key()
@@ -64,14 +65,72 @@ class TestSettings:
         assert s.model != updated.model
         assert s is not updated
 
+    def test_resolve_auth_prefers_env_over_flat_api_key_for_openai(self, monkeypatch):
+        """When api_format=openai, resolve_auth() should use OPENAI_API_KEY
+        from the environment rather than the flat api_key field which may
+        contain an Anthropic key from settings.json."""
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-correct")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        s = Settings(api_key="sk-ant-wrong-provider", api_format="openai")
+        s = s.sync_active_profile_from_flat_fields()
+        auth = s.resolve_auth()
+        assert auth.value == "sk-openai-correct"
+        assert "OPENAI" in auth.source
+
+    def test_resolve_auth_falls_back_to_flat_api_key(self, monkeypatch):
+        """When no provider-specific env var is set, resolve_auth() should
+        still fall back to the flat api_key field."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        s = Settings(api_key="sk-fallback-key")
+        s = s.sync_active_profile_from_flat_fields()
+        auth = s.resolve_auth()
+        assert auth.value == "sk-fallback-key"
+
+    def test_env_overrides_picks_up_openai_base_url(self, tmp_path: Path, monkeypatch):
+        """_apply_env_overrides should pick up OPENAI_BASE_URL for relay
+        providers that use OpenAI-compatible format."""
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+        monkeypatch.delenv("OPENHARNESS_BASE_URL", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://relay.example.com/v1")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-relay-key")
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps({}))
+        s = load_settings(path)
+        assert s.base_url == "https://relay.example.com/v1"
+
+    def test_anthropic_base_url_takes_precedence_over_openai(self, tmp_path: Path, monkeypatch):
+        """ANTHROPIC_BASE_URL should take precedence over OPENAI_BASE_URL."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://anthropic-relay.example.com")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://openai-relay.example.com/v1")
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps({}))
+        s = load_settings(path)
+        assert s.base_url == "https://anthropic-relay.example.com"
+
 
 class TestLoadSaveSettings:
-    def test_load_missing_file_returns_defaults(self, tmp_path: Path):
+    def test_load_missing_file_returns_defaults(self, tmp_path: Path, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.delenv("OPENHARNESS_BASE_URL", raising=False)
+        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+        monkeypatch.delenv("OPENHARNESS_MODEL", raising=False)
         path = tmp_path / "nonexistent.json"
         s = load_settings(path)
         assert s == Settings().materialize_active_profile()
 
-    def test_load_existing_file(self, tmp_path: Path):
+    def test_load_existing_file(self, tmp_path: Path, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+        monkeypatch.delenv("OPENHARNESS_MODEL", raising=False)
         path = tmp_path / "settings.json"
         path.write_text(json.dumps({"model": "claude-opus-4-20250514", "verbose": True, "fast_mode": True}))
         s = load_settings(path)
@@ -80,7 +139,13 @@ class TestLoadSaveSettings:
         assert s.fast_mode is True
         assert s.api_key == ""  # default preserved
 
-    def test_save_and_load_roundtrip(self, tmp_path: Path):
+    def test_save_and_load_roundtrip(self, tmp_path: Path, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+        monkeypatch.delenv("OPENHARNESS_MODEL", raising=False)
         path = tmp_path / "settings.json"
         original = Settings(api_key="sk-roundtrip", model="claude-opus-4-20250514", verbose=True)
         save_settings(original, path)
@@ -132,6 +197,44 @@ class TestLoadSaveSettings:
         assert materialized.provider == "openai_codex"
         assert materialized.api_format == "openai"
         assert materialized.model == "gpt-5"
+
+    def test_merge_cli_active_profile_does_not_inherit_flat_provider_fields(self):
+        settings = Settings(
+            active_profile="moonshot",
+            provider="moonshot",
+            api_format="openai",
+            base_url="https://api.moonshot.cn/v1",
+            model="kimi-k2.5",
+            profiles={
+                "moonshot": ProviderProfile(
+                    label="Moonshot",
+                    provider="moonshot",
+                    api_format="openai",
+                    auth_source="moonshot_api_key",
+                    default_model="kimi-k2.5",
+                    last_model="kimi-k2.5",
+                    base_url="https://api.moonshot.cn/v1",
+                ),
+                "codex": ProviderProfile(
+                    label="Codex Subscription",
+                    provider="openai_codex",
+                    api_format="openai",
+                    auth_source="codex_subscription",
+                    default_model="gpt-5.4",
+                    last_model="gpt-5.4",
+                ),
+            },
+        )
+
+        updated = settings.merge_cli_overrides(active_profile="codex")
+        profile_name, profile = updated.resolve_profile()
+
+        assert profile_name == "codex"
+        assert updated.provider == "openai_codex"
+        assert updated.base_url is None
+        assert updated.model == "gpt-5.4"
+        assert profile.provider == "openai_codex"
+        assert profile.auth_source == "codex_subscription"
 
     def test_claude_profile_materializes_alias_to_concrete_model(self):
         settings = Settings(

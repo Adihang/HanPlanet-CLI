@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -392,6 +393,8 @@ def test_describe_external_binding_reports_refreshable_claude_token(tmp_path: Pa
 
 
 def test_refresh_claude_oauth_credential(monkeypatch):
+    seen: dict[str, object] = {}
+
     class _FakeResponse:
         def __enter__(self):
             return self
@@ -408,10 +411,13 @@ def test_refresh_claude_oauth_credential(monkeypatch):
                 }
             ).encode("utf-8")
 
-    monkeypatch.setattr(
-        "openharness.auth.external.urllib.request.urlopen",
-        lambda request, timeout=10: _FakeResponse(),
-    )
+    def _fake_urlopen(request, timeout=10):
+        seen["timeout"] = timeout
+        seen["headers"] = dict(request.header_items())
+        seen["body"] = json.loads(request.data.decode("utf-8"))
+        return _FakeResponse()
+
+    monkeypatch.setattr("openharness.auth.external.urllib.request.urlopen", _fake_urlopen)
     monkeypatch.setattr("openharness.auth.external.time.time", lambda: 1000)
 
     refreshed = refresh_claude_oauth_credential("refresh-token")
@@ -419,6 +425,36 @@ def test_refresh_claude_oauth_credential(monkeypatch):
     assert refreshed["access_token"] == "fresh-token"
     assert refreshed["refresh_token"] == "fresh-refresh"
     assert refreshed["expires_at_ms"] == (1000 * 1000) + (7200 * 1000)
+    assert seen["timeout"] == 10
+    assert seen["headers"]["Content-type"] == "application/json"
+    assert seen["body"]["grant_type"] == "refresh_token"
+    assert seen["body"]["refresh_token"] == "refresh-token"
+    assert "user:inference" in seen["body"]["scope"]
+
+
+def test_refresh_claude_oauth_credential_reports_invalid_grant(monkeypatch):
+    class _FakeResponse:
+        def read(self):
+            return b'{"error":"invalid_grant","error_description":"Refresh token not found or invalid"}'
+
+        def close(self):
+            return None
+
+    error = urllib.error.HTTPError(
+        "https://platform.claude.com/v1/oauth/token",
+        400,
+        "Bad Request",
+        hdrs=None,
+        fp=_FakeResponse(),
+    )
+
+    monkeypatch.setattr(
+        "openharness.auth.external.urllib.request.urlopen",
+        lambda request, timeout=10: (_ for _ in ()).throw(error),
+    )
+
+    with pytest.raises(ValueError, match="claude auth login"):
+        refresh_claude_oauth_credential("refresh-token")
 
 
 def test_get_claude_code_version_uses_fallback(monkeypatch):

@@ -26,6 +26,7 @@ from openharness.api.usage import UsageSnapshot
 from openharness.engine.messages import (
     ConversationMessage,
     ContentBlock,
+    ImageBlock,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
@@ -36,6 +37,21 @@ log = logging.getLogger(__name__)
 MAX_RETRIES = 3
 BASE_DELAY = 1.0
 MAX_DELAY = 30.0
+_MAX_COMPLETION_TOKEN_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def _token_limit_param_for_model(model: str, max_tokens: int) -> dict[str, int]:
+    """Return the correct token limit field for the target OpenAI model.
+
+    GPT-5 and the current reasoning-model families reject ``max_tokens`` and
+    require ``max_completion_tokens`` instead.
+    """
+    normalized = model.strip().lower()
+    if "/" in normalized:
+        normalized = normalized.rsplit("/", 1)[-1]
+    if normalized.startswith(_MAX_COMPLETION_TOKEN_MODEL_PREFIXES):
+        return {"max_completion_tokens": max_tokens}
+    return {"max_tokens": max_tokens}
 
 
 def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -83,7 +99,7 @@ def _convert_messages_to_openai(
         elif msg.role == "user":
             # User messages may contain text or tool_result blocks
             tool_results = [b for b in msg.content if isinstance(b, ToolResultBlock)]
-            text_blocks = [b for b in msg.content if isinstance(b, TextBlock)]
+            user_blocks = [b for b in msg.content if isinstance(b, (TextBlock, ImageBlock))]
 
             if tool_results:
                 # Each tool result becomes a separate message with role="tool"
@@ -93,15 +109,38 @@ def _convert_messages_to_openai(
                         "tool_call_id": tr.tool_use_id,
                         "content": tr.content,
                     })
-            if text_blocks:
-                text = "".join(b.text for b in text_blocks)
-                if text.strip():
-                    openai_messages.append({"role": "user", "content": text})
-            if not tool_results and not text_blocks:
+            if user_blocks:
+                content = _convert_user_content_to_openai(user_blocks)
+                if isinstance(content, str):
+                    if content.strip():
+                        openai_messages.append({"role": "user", "content": content})
+                elif content:
+                    openai_messages.append({"role": "user", "content": content})
+            if not tool_results and not user_blocks:
                 # Empty user message (shouldn't happen, but handle gracefully)
                 openai_messages.append({"role": "user", "content": ""})
 
     return openai_messages
+
+
+def _convert_user_content_to_openai(blocks: list[ContentBlock]) -> str | list[dict[str, Any]]:
+    """Convert user text/image blocks into OpenAI chat content."""
+    has_image = any(isinstance(block, ImageBlock) for block in blocks)
+    if not has_image:
+        return "".join(block.text for block in blocks if isinstance(block, TextBlock))
+
+    content: list[dict[str, Any]] = []
+    for block in blocks:
+        if isinstance(block, TextBlock) and block.text:
+            content.append({"type": "text", "text": block.text})
+        elif isinstance(block, ImageBlock):
+            content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{block.media_type};base64,{block.data}",
+                },
+            })
+    return content
 
 
 def _convert_assistant_message(msg: ConversationMessage) -> dict[str, Any]:
@@ -221,10 +260,10 @@ class OpenAICompatibleClient:
         params: dict[str, Any] = {
             "model": request.model,
             "messages": openai_messages,
-            "max_tokens": request.max_tokens,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        params.update(_token_limit_param_for_model(request.model, request.max_tokens))
         if openai_tools:
             params["tools"] = openai_tools
             # Some providers (Kimi) error on empty reasoning_content in

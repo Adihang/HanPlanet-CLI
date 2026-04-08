@@ -34,6 +34,7 @@ _KNOWN_PROVIDERS = [
     "dashscope",
     "bedrock",
     "vertex",
+    "moonshot",
 ]
 
 _AUTH_SOURCES = [
@@ -45,6 +46,7 @@ _AUTH_SOURCES = [
     "dashscope_api_key",
     "bedrock_api_key",
     "vertex_api_key",
+    "moonshot_api_key",
 ]
 
 _PROFILE_BY_PROVIDER = {
@@ -53,6 +55,7 @@ _PROFILE_BY_PROVIDER = {
     "openai": "openai-compatible",
     "openai_codex": "codex",
     "copilot": "copilot",
+    "moonshot": "moonshot",
 }
 
 
@@ -225,6 +228,14 @@ class AuthManager:
                     configured = True
                     source = "env"
                 elif load_credential("dashscope", "api_key"):
+                    configured = True
+                    source = "file"
+
+            elif provider == "moonshot":
+                if os.environ.get("MOONSHOT_API_KEY"):
+                    configured = True
+                    source = "env"
+                elif load_credential("moonshot", "api_key"):
                     configured = True
                     source = "file"
 

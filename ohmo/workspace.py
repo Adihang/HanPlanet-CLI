@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 
-
 WORKSPACE_DIRNAME = ".ohmo"
 
 SOUL_TEMPLATE = """# SOUL.md - Who You Are
@@ -196,6 +195,14 @@ def get_memory_dir(workspace: str | Path | None = None) -> Path:
     return get_workspace_root(workspace) / "memory"
 
 
+def get_skills_dir(workspace: str | Path | None = None) -> Path:
+    return get_workspace_root(workspace) / "skills"
+
+
+def get_plugins_dir(workspace: str | Path | None = None) -> Path:
+    return get_workspace_root(workspace) / "plugins"
+
+
 def get_memory_index_path(workspace: str | Path | None = None) -> Path:
     return get_memory_dir(workspace) / "MEMORY.md"
 
@@ -225,6 +232,8 @@ def ensure_workspace(workspace: str | Path | None = None) -> Path:
     root = get_workspace_root(workspace)
     root.mkdir(parents=True, exist_ok=True)
     get_memory_dir(root).mkdir(parents=True, exist_ok=True)
+    get_skills_dir(root).mkdir(parents=True, exist_ok=True)
+    get_plugins_dir(root).mkdir(parents=True, exist_ok=True)
     get_sessions_dir(root).mkdir(parents=True, exist_ok=True)
     get_logs_dir(root).mkdir(parents=True, exist_ok=True)
     get_attachments_dir(root).mkdir(parents=True, exist_ok=True)
@@ -290,6 +299,8 @@ def workspace_health(workspace: str | Path | None = None) -> dict[str, bool]:
         "user": get_user_path(root).exists(),
         "identity": get_identity_path(root).exists(),
         "memory_dir": get_memory_dir(root).exists(),
+        "skills_dir": get_skills_dir(root).exists(),
+        "plugins_dir": get_plugins_dir(root).exists(),
         "memory_index": get_memory_index_path(root).exists(),
         "sessions_dir": get_sessions_dir(root).exists(),
         "gateway_config": get_gateway_config_path(root).exists(),

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Optional
 
 import typer
 
-__version__ = "0.1.2"
+__version__ = "0.1.4"
 
 
 def _version_callback(value: bool) -> None:
@@ -269,6 +270,7 @@ _PROVIDER_LABELS: dict[str, str] = {
     "dashscope": "Alibaba DashScope",
     "bedrock": "AWS Bedrock",
     "vertex": "Google Vertex AI",
+    "moonshot": "Moonshot (Kimi)",
 }
 
 _AUTH_SOURCE_LABELS: dict[str, str] = {
@@ -280,6 +282,7 @@ _AUTH_SOURCE_LABELS: dict[str, str] = {
     "dashscope_api_key": "DashScope API key",
     "bedrock_api_key": "Bedrock credentials",
     "vertex_api_key": "Vertex credentials",
+    "moonshot_api_key": "Moonshot API key",
 }
 
 
@@ -755,7 +758,7 @@ def _login_provider(provider: str) -> None:
         _bind_external_provider(provider)
         return
 
-    if provider in ("anthropic", "openai", "dashscope", "bedrock", "vertex"):
+    if provider in ("anthropic", "openai", "dashscope", "bedrock", "vertex", "moonshot"):
         label = _PROVIDER_LABELS.get(provider, provider)
         flow = ApiKeyFlow(provider=provider, prompt_text=f"Enter your {label} API key")
         try:
@@ -855,7 +858,7 @@ def auth_login(
     """Interactively authenticate with a provider.
 
     Run without arguments to choose a provider from a menu.
-    Supported providers: anthropic, anthropic_claude, openai, openai_codex, copilot, dashscope, bedrock, vertex.
+    Supported providers: anthropic, anthropic_claude, openai, openai_codex, copilot, dashscope, bedrock, vertex, moonshot.
     """
     if provider is None:
         print("Select a provider to authenticate:", flush=True)
@@ -1312,6 +1315,18 @@ def main(
         return
 
     import asyncio
+    import logging
+
+    if debug:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+            stream=sys.stderr,
+        )
+        logging.getLogger("openharness").setLevel(logging.DEBUG)
+    elif os.environ.get("OPENHARNESS_LOG_LEVEL"):
+        lvl = getattr(logging, os.environ["OPENHARNESS_LOG_LEVEL"].upper(), logging.WARNING)
+        logging.basicConfig(level=lvl, format="%(asctime)s [%(name)s] %(levelname)s %(message)s", stream=sys.stderr)
 
     if dangerously_skip_permissions:
         permission_mode = "full_auto"
@@ -1380,6 +1395,8 @@ def main(
                 system_prompt=session_data.get("system_prompt") or system_prompt,
                 api_key=api_key,
                 restore_messages=session_data.get("messages"),
+                permission_mode=permission_mode,
+                api_format=api_format,
             )
         )
         return
@@ -1417,5 +1434,6 @@ def main(
             system_prompt=system_prompt,
             api_key=api_key,
             api_format=api_format,
+            permission_mode=permission_mode,
         )
     )

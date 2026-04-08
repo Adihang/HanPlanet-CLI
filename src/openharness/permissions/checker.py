@@ -11,6 +11,31 @@ from openharness.permissions.modes import PermissionMode
 
 log = logging.getLogger(__name__)
 
+# Paths that are always denied regardless of permission mode or user config.
+# These protect high-value credential and key material from LLM-directed access
+# (including via prompt injection).  Patterns use fnmatch syntax and are matched
+# against the fully-resolved absolute path produced by the query engine.
+SENSITIVE_PATH_PATTERNS: tuple[str, ...] = (
+    # SSH keys and config
+    "*/.ssh/*",
+    # AWS credentials
+    "*/.aws/credentials",
+    "*/.aws/config",
+    # GCP credentials
+    "*/.config/gcloud/*",
+    # Azure credentials
+    "*/.azure/*",
+    # GPG keys
+    "*/.gnupg/*",
+    # Docker credentials
+    "*/.docker/config.json",
+    # Kubernetes credentials
+    "*/.kube/config",
+    # OpenHarness own credential stores
+    "*/.openharness/credentials.json",
+    "*/.openharness/copilot_auth.json",
+)
+
 
 @dataclass(frozen=True)
 class PermissionDecision:
@@ -56,6 +81,21 @@ class PermissionChecker:
         command: str | None = None,
     ) -> PermissionDecision:
         """Return whether the tool may run immediately."""
+        # Built-in sensitive path protection — always active, cannot be
+        # overridden by user settings or permission mode.  This is a
+        # defence-in-depth measure against LLM-directed or prompt-injection
+        # driven access to credential files.
+        if file_path:
+            for pattern in SENSITIVE_PATH_PATTERNS:
+                if fnmatch.fnmatch(file_path, pattern):
+                    return PermissionDecision(
+                        allowed=False,
+                        reason=(
+                            f"Access denied: {file_path} is a sensitive credential path "
+                            f"(matched built-in pattern '{pattern}')"
+                        ),
+                    )
+
         # Explicit tool deny list
         if tool_name in self._settings.denied_tools:
             return PermissionDecision(allowed=False, reason=f"{tool_name} is explicitly denied")

@@ -7,7 +7,7 @@ import json
 import os
 import subprocess
 import time
-import urllib.parse
+import urllib.error
 import urllib.request
 import uuid
 from dataclasses import dataclass
@@ -27,6 +27,13 @@ CLAUDE_OAUTH_TOKEN_ENDPOINTS = (
 CLAUDE_COMMON_BETAS = (
     "interleaved-thinking-2025-05-14",
     "fine-grained-tool-streaming-2025-05-14",
+)
+CLAUDE_AI_OAUTH_SCOPES = (
+    "user:profile",
+    "user:inference",
+    "user:sessions:claude_code",
+    "user:mcp_servers",
+    "user:file_upload",
 )
 CLAUDE_OAUTH_ONLY_BETAS = (
     "claude-code-20250219",
@@ -303,20 +310,26 @@ def claude_oauth_headers() -> dict[str, str]:
     }
 
 
-def refresh_claude_oauth_credential(refresh_token: str) -> dict[str, Any]:
+def refresh_claude_oauth_credential(
+    refresh_token: str,
+    *,
+    scopes: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     """Refresh a Claude OAuth token without mutating local files."""
     if not refresh_token:
         raise ValueError("refresh_token is required")
 
-    payload = urllib.parse.urlencode(
+    requested_scopes = list(scopes or CLAUDE_AI_OAUTH_SCOPES)
+    payload = json.dumps(
         {
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
             "client_id": CLAUDE_OAUTH_CLIENT_ID,
+            "scope": " ".join(requested_scopes),
         }
     ).encode("utf-8")
     headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type": "application/json",
         "User-Agent": f"claude-cli/{get_claude_code_version()} (external, cli)",
     }
     last_error: Exception | None = None
@@ -325,6 +338,24 @@ def refresh_claude_oauth_credential(refresh_token: str) -> dict[str, Any]:
         try:
             with urllib.request.urlopen(request, timeout=10) as response:
                 result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body = ""
+            try:
+                body = exc.read().decode("utf-8", errors="replace").strip()
+            except Exception:
+                body = ""
+            if "invalid_grant" in body:
+                last_error = ValueError(
+                    "Claude OAuth refresh token is invalid or expired. "
+                    "Run `claude auth login` to refresh the official Claude CLI "
+                    "credentials, then run `oh auth claude-login` again."
+                )
+                continue
+            detail = f"{exc.code} {exc.reason}"
+            if body:
+                detail = f"{detail}: {body}"
+            last_error = ValueError(f"Claude OAuth refresh failed at {endpoint}: {detail}")
+            continue
         except Exception as exc:
             last_error = exc
             continue

@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 import openharness.cli as cli
 from openharness.config import load_settings
 
+
 app = cli.app
 
 
@@ -113,3 +114,18 @@ def test_setup_flow_creates_kimi_profile_with_profile_scoped_key(tmp_path: Path,
     from openharness.auth.storage import load_credential
 
     assert load_credential("profile:kimi-anthropic", "api_key") == "sk-kimi-test"
+
+
+def test_dangerously_skip_permissions_passes_full_auto_to_run_repl(monkeypatch):
+    runner = CliRunner()
+    captured = {}
+
+    async def fake_run_repl(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("openharness.ui.app.run_repl", fake_run_repl)
+
+    result = runner.invoke(app, ["--dangerously-skip-permissions"])
+
+    assert result.exit_code == 0
+    assert captured["permission_mode"] == "full_auto"

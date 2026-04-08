@@ -64,6 +64,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	const [modalInput, setModalInput] = useState('');
 	const [history, setHistory] = useState<string[]>([]);
 	const [historyIndex, setHistoryIndex] = useState(-1);
+	const [lastEscapeAt, setLastEscapeAt] = useState(0);
 	const [scriptIndex, setScriptIndex] = useState(0);
 	const [pickerIndex, setPickerIndex] = useState(0);
 	const [selectModal, setSelectModal] = useState<SelectModalState>(null);
@@ -167,10 +168,17 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	};
 
 	useInput((chunk, key) => {
+		const isPaste = chunk.length > 1 && !key.ctrl && !key.meta;
+
 		// Ctrl+C → exit
 		if (key.ctrl && chunk === 'c') {
 			session.sendRequest({type: 'shutdown'});
 			exit();
+			return;
+		}
+
+		// Let ink-text-input handle pasted text directly.
+		if (isPaste) {
 			return;
 		}
 
@@ -289,6 +297,18 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				setInput('');
 				return;
 			}
+		}
+
+		if (key.escape) {
+			const now = Date.now();
+			if (input && now - lastEscapeAt < 500) {
+				setInput('');
+				setHistoryIndex(-1);
+				setLastEscapeAt(0);
+				return;
+			}
+			setLastEscapeAt(now);
+			return;
 		}
 
 		// --- History navigation ---
