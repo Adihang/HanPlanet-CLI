@@ -312,6 +312,14 @@ class ReactBackendHost:
             await self._handle_select_command(f"model-for-{selected}")
             return True
 
+        # Hanplanet auth method picker
+        if command == "hanplanet-auth":
+            if selected == "apikey":
+                await self._hanplanet_apikey_flow()
+            elif selected == "oauth":
+                await self._hanplanet_oauth_flow()
+            return True
+
         # /memory: action picker → optional file picker
         if command == "memory":
             if selected == "add-hint":
@@ -658,7 +666,8 @@ class ReactBackendHost:
                 {"value": "dashscope", "label": "🟡  DashScope / Qwen",    "description": "qwen3-max, qwen3.5-flash",              "active": active_profile.provider == "dashscope"},
                 {"value": "moonshot",  "label": "🌙  Moonshot / Kimi",     "description": "kimi-k2.5, kimi-k2-turbo",             "active": active_profile.provider == "moonshot"},
                 {"value": "groq",      "label": "⚡  Groq",                "description": "llama-3.3-70b, mixtral",               "active": active_profile.provider == "groq"},
-                {"value": "mistral",   "label": "🌊  Mistral",             "description": "mistral-large, codestral",             "active": active_profile.provider == "mistral"},
+                {"value": "mistral",     "label": "🌊  Mistral",             "description": "mistral-large, codestral",             "active": active_profile.provider == "mistral"},
+                {"value": "hanplanet",   "label": "🏔  Hanplanet",            "description": "hanplanet.com 원격 모델 (OAuth / API 키)",  "active": active_profile.provider == "hanplanet"},
             ]
             await self._emit(
                 BackendEvent(
@@ -892,6 +901,35 @@ class ReactBackendHost:
                     select_options=options,
                 )
             )
+            return
+
+        if command == "model-for-hanplanet":
+            from openharness.auth.storage import load_credential
+            existing_key = load_credential("hanplanet", "api_key") or ""
+            if existing_key:
+                models = await self._fetch_hanplanet_models(existing_key)
+                if models:
+                    hp_current = display_model_setting(active_profile)
+                    options = [
+                        {"value": m, "label": m, "description": "🏔 Hanplanet", "active": m == hp_current}
+                        for m in models
+                    ]
+                    await self._emit(BackendEvent(
+                        type="select_request",
+                        modal={"kind": "select", "title": "🏔 Hanplanet 모델", "command": "model"},
+                        select_options=options,
+                    ))
+                    return
+            # No saved key — show auth method picker
+            options = [
+                {"value": "oauth",  "label": "🌐  브라우저로 로그인 (OAuth)", "description": "hanplanet.com 계정으로 자동 인증", "active": False},
+                {"value": "apikey", "label": "🔑  API 키 직접 입력",          "description": "hanplanet.com에서 발급받은 키",    "active": False},
+            ]
+            await self._emit(BackendEvent(
+                type="select_request",
+                modal={"kind": "select", "title": "🏔 Hanplanet 인증 방법 선택", "command": "hanplanet-auth"},
+                select_options=options,
+            ))
             return
 
         if command == "agents":
@@ -1154,6 +1192,206 @@ class ReactBackendHost:
             ]
 
         return []
+
+    # ── Hanplanet auth flows ────────────────────────────────────────────────
+
+    async def _hanplanet_apikey_flow(self) -> None:
+        api_key = await self._ask_question(
+            "Hanplanet API 키를 입력하세요 (hanplanet.com 에서 발급):"
+        )
+        if not api_key or not api_key.strip():
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+        await self._hanplanet_save_and_select(api_key.strip())
+
+    async def _hanplanet_oauth_flow(self) -> None:
+        import asyncio
+        import hashlib
+        import base64
+        import secrets
+        import webbrowser
+        from urllib.parse import urlencode, urlparse, parse_qs
+
+        HANPLANET_BASE = "https://hanplanet.com"
+        CLIENT_ID      = "openharness-cli"
+        REDIRECT_PORT  = 7777
+        REDIRECT_URI   = f"http://localhost:{REDIRECT_PORT}/callback"
+
+        # PKCE — code_verifier / code_challenge
+        code_verifier   = secrets.token_urlsafe(64)
+        code_challenge  = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).rstrip(b"=").decode()
+        state = secrets.token_urlsafe(16)
+
+        auth_url = (
+            f"{HANPLANET_BASE}/o/authorize?"
+            + urlencode({
+                "response_type":         "code",
+                "client_id":             CLIENT_ID,
+                "redirect_uri":          REDIRECT_URI,
+                "state":                 state,
+                "code_challenge":        code_challenge,
+                "code_challenge_method": "S256",
+            })
+        )
+
+        loop = asyncio.get_running_loop()
+        code_future: asyncio.Future[str] = loop.create_future()
+
+        async def _handle_callback(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ) -> None:
+            try:
+                data = await asyncio.wait_for(reader.read(4096), timeout=10)
+                first_line = data.decode(errors="ignore").split("\n")[0]
+                parts = first_line.split(" ")
+                if len(parts) >= 2:
+                    params = parse_qs(urlparse(parts[1]).query)
+                    code        = (params.get("code")  or [None])[0]
+                    recv_state  = (params.get("state") or [None])[0]
+                    if recv_state == state and code and not code_future.done():
+                        body_html = (
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/html;charset=utf-8\r\n\r\n"
+                            "<html><body style='font-family:sans-serif;text-align:center;padding:48px'>"
+                            "<h2>✅ 인증 완료!</h2>"
+                            "<p>이 창을 닫아도 됩니다.</p>"
+                            "</body></html>"
+                        ).encode("utf-8")
+                        writer.write(body_html)
+                        code_future.set_result(code)
+                    else:
+                        writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\nInvalid state")
+                        if not code_future.done():
+                            code_future.set_exception(Exception("Invalid OAuth callback"))
+            except Exception as exc:
+                if not code_future.done():
+                    code_future.set_exception(exc)
+            finally:
+                with contextlib.suppress(Exception):
+                    await writer.drain()
+                    writer.close()
+
+        try:
+            server = await asyncio.start_server(_handle_callback, "127.0.0.1", REDIRECT_PORT)
+        except OSError:
+            await self._emit(BackendEvent(
+                type="error",
+                message=f"포트 {REDIRECT_PORT}를 사용할 수 없습니다. 다른 프로세스가 점유 중입니다.",
+            ))
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+
+        await self._emit(BackendEvent(
+            type="info",
+            message="브라우저를 열어 Hanplanet 로그인 페이지로 이동합니다…",
+        ))
+        webbrowser.open(auth_url)
+
+        try:
+            async with server:
+                code = await asyncio.wait_for(code_future, timeout=120)
+        except asyncio.TimeoutError:
+            await self._emit(BackendEvent(type="error", message="인증 시간 초과 (120초). 다시 시도해주세요."))
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+        except Exception as exc:
+            await self._emit(BackendEvent(type="error", message=f"OAuth 실패: {exc}"))
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+
+        # Authorization code → access token
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    f"{HANPLANET_BASE}/o/token/",
+                    data={
+                        "grant_type":    "authorization_code",
+                        "code":          code,
+                        "redirect_uri":  REDIRECT_URI,
+                        "client_id":     CLIENT_ID,
+                        "code_verifier": code_verifier,
+                    },
+                )
+            token_data = resp.json()
+        except Exception as exc:
+            await self._emit(BackendEvent(type="error", message=f"토큰 발급 실패: {exc}"))
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+
+        access_token = token_data.get("access_token")
+        if not access_token:
+            err = token_data.get("error_description") or token_data.get("error") or str(token_data)
+            await self._emit(BackendEvent(type="error", message=f"토큰 발급 실패: {err}"))
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+
+        await self._hanplanet_save_and_select(access_token)
+
+    async def _hanplanet_save_and_select(self, api_key: str) -> None:
+        """Save Hanplanet API key, create/update profile, then show model picker."""
+        from openharness.auth.manager import AuthManager
+        from openharness.config.settings import ProviderProfile, load_settings
+
+        settings = load_settings()
+        manager = AuthManager(settings)
+
+        # Upsert a dedicated "hanplanet" profile
+        profile = ProviderProfile(
+            label="Hanplanet",
+            provider="openai",
+            api_format="openai",
+            auth_source="openai_api_key",
+            default_model="",
+            base_url="https://hanplanet.com/ai/v1",
+            credential_slot="hanplanet",
+        )
+        try:
+            manager.upsert_profile("hanplanet", profile)
+            manager.store_profile_credential("hanplanet", "api_key", api_key)
+        except Exception as exc:
+            await self._emit(BackendEvent(type="error", message=f"프로필 저장 실패: {exc}"))
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+
+        # Fetch models using the new key
+        models = await self._fetch_hanplanet_models(api_key)
+        if not models:
+            await self._emit(BackendEvent(
+                type="error",
+                message="✅ 인증은 완료됐지만 모델 목록을 가져올 수 없습니다. hanplanet.com/ai/v1/models 를 확인해주세요.",
+            ))
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+
+        assert self._bundle is not None
+        current_model = display_model_setting(self._bundle.current_settings().resolve_profile()[1])
+        options = [
+            {"value": m, "label": m, "description": "🏔 Hanplanet", "active": m == current_model}
+            for m in models
+        ]
+        await self._emit(BackendEvent(type="info", message="✅ Hanplanet 인증 완료!"))
+        await self._emit(BackendEvent(
+            type="select_request",
+            modal={"kind": "select", "title": "🏔 Hanplanet 모델 선택", "command": "model"},
+            select_options=options,
+        ))
+
+    @staticmethod
+    async def _fetch_hanplanet_models(api_key: str) -> list[str]:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    "https://hanplanet.com/ai/v1/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+            body = resp.json()
+            data = body.get("data") or [{"id": m} for m in body.get("models", [])]
+            return [m["id"] for m in data if m.get("id")]
+        except Exception:
+            return []
 
     async def _ask_permission(self, tool_name: str, reason: str) -> bool:
         async with self._permission_lock:
