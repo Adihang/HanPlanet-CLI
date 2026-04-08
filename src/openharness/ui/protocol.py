@@ -83,6 +83,7 @@ class BackendEvent(BaseModel):
         "swarm_status",
         "error",
         "info",
+        "oauth_pending",
         "shutdown",
     ]
     select_options: list[dict[str, Any]] | None = None
@@ -101,6 +102,7 @@ class BackendEvent(BaseModel):
     # New fields for enhanced events
     todo_markdown: str | None = None
     plan_mode: str | None = None
+    timeout_seconds: int | None = None
     swarm_teammates: list[dict[str, Any]] | None = None
     swarm_notifications: list[dict[str, Any]] | None = None
 

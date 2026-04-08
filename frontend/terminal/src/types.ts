@@ -87,6 +87,7 @@ export type BackendEvent = {
 	todo_items?: TodoItemSnapshot[] | null;
 	todo_markdown?: string | null;
 	plan_mode?: string | null;
+	timeout_seconds?: number | null;
 	swarm_teammates?: SwarmTeammateSnapshot[] | null;
 	swarm_notifications?: SwarmNotificationSnapshot[] | null;
 };

@@ -1292,8 +1292,9 @@ class ReactBackendHost:
             return
 
         await self._emit(BackendEvent(
-            type="info",
+            type="oauth_pending",
             message="브라우저를 열어 Hanplanet 로그인 페이지로 이동합니다…",
+            timeout_seconds=120,
         ))
         webbrowser.open(auth_url)
 

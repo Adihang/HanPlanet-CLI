@@ -2,6 +2,7 @@ import React, {useEffect, useMemo, useState} from 'react';
 import {Box, Text, useApp, useInput} from 'ink';
 
 import {CommandPicker} from './components/CommandPicker.js';
+import {OAuthCountdown} from './components/OAuthCountdown.js';
 import {ConversationView} from './components/ConversationView.js';
 import {ModalHost} from './components/ModalHost.js';
 import {PromptInput} from './components/PromptInput.js';
@@ -411,6 +412,11 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 					options={selectModal.options}
 					selectedIndex={selectIndex}
 				/>
+			) : null}
+
+			{/* OAuth countdown */}
+			{session.oauthPending ? (
+				<OAuthCountdown message={session.oauthPending.message} endsAt={session.oauthPending.endsAt} />
 			) : null}
 
 			{/* Command picker */}

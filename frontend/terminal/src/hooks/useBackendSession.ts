@@ -34,6 +34,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	const [todoMarkdown, setTodoMarkdown] = useState('');
 	const [swarmTeammates, setSwarmTeammates] = useState<SwarmTeammateSnapshot[]>([]);
 	const [swarmNotifications, setSwarmNotifications] = useState<SwarmNotificationSnapshot[]>([]);
+	const [oauthPending, setOauthPending] = useState<{message: string; endsAt: number} | null>(null);
 	const childRef = useRef<ChildProcessWithoutNullStreams | null>(null);
 	const sentInitialPrompt = useRef(false);
 
@@ -195,6 +196,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		if (event.type === 'line_complete') {
 			// If the line ended without an assistant_complete (e.g. errors), make sure we
 			// don't leave stale streaming text on screen.
+			setOauthPending(null);
 			clearAssistantDelta();
 			setBusy(false);
 			return;
@@ -228,13 +230,20 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			return;
 		}
 		if (event.type === 'error') {
+			setOauthPending(null);
 			setTranscript((items) => [...items, {role: 'system', text: `error: ${event.message ?? 'unknown error'}`}]);
 			clearAssistantDelta();
 			setBusy(false);
 			return;
 		}
 		if (event.type === 'info') {
+			setOauthPending(null);
 			setTranscript((items) => [...items, {role: 'system', text: event.message ?? ''}]);
+			return;
+		}
+		if (event.type === 'oauth_pending') {
+			const secs = event.timeout_seconds ?? 120;
+			setOauthPending({message: event.message ?? '', endsAt: Date.now() + secs * 1000});
 			return;
 		}
 		if (event.type === 'todo_update') {
@@ -279,11 +288,12 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			todoMarkdown,
 			swarmTeammates,
 			swarmNotifications,
+			oauthPending,
 			setModal,
 			setSelectRequest,
 			setBusy,
 			sendRequest,
 		}),
-		[assistantBuffer, bridgeSessions, busy, commands, mcpServers, modal, ready, selectRequest, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
+		[assistantBuffer, bridgeSessions, busy, commands, mcpServers, modal, oauthPending, ready, selectRequest, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
 	);
 }
