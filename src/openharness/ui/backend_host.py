@@ -349,14 +349,18 @@ class ReactBackendHost:
                 return True
             # "list" falls through to _build_select_command_line
 
-        # /provider hanplanet → trigger auth flow if no credential stored
+        # /provider hanplanet → always show auth method picker (allows re-auth / account switch)
         if command == "provider" and selected == "hanplanet":
-            from openharness.auth.storage import load_credential
-            cred = load_credential("profile:hanplanet", "api_key")
-            if not cred:
-                await self._handle_select_command("model-for-hanplanet")
-                return True
-            # credential exists — fall through to normal /provider hanplanet
+            options = [
+                {"value": "oauth",  "label": "🌐  브라우저로 로그인 (OAuth)", "description": "hanplanet.com 계정으로 자동 인증", "active": False},
+                {"value": "apikey", "label": "🔑  API 키 직접 입력",          "description": "hanplanet.com에서 발급받은 키",    "active": False},
+            ]
+            await self._emit(BackendEvent(
+                type="select_request",
+                modal={"kind": "select", "title": "🏔 Hanplanet 인증 방법 선택", "command": "hanplanet-auth"},
+                select_options=options,
+            ))
+            return True
 
         line = self._build_select_command_line(command, selected)
         if line is None:
