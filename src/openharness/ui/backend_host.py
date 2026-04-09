@@ -1215,99 +1215,67 @@ class ReactBackendHost:
 
     async def _hanplanet_oauth_flow(self) -> None:
         import asyncio
-        import hashlib
-        import base64
+        import platform
         import secrets
-        import webbrowser
-        from urllib.parse import urlencode, urlparse, parse_qs
+        import subprocess
+        from urllib.parse import urlencode
 
         HANPLANET_BASE = "https://www.hanplanet.com"
-        CLIENT_ID      = "openharness-cli"
-        REDIRECT_PORT  = 7777
-        REDIRECT_URI   = f"http://localhost:{REDIRECT_PORT}/callback"
+        state = secrets.token_hex(16)
 
-        # PKCE — code_verifier / code_challenge
-        code_verifier   = secrets.token_urlsafe(64)
-        code_challenge  = base64.urlsafe_b64encode(
-            hashlib.sha256(code_verifier.encode()).digest()
-        ).rstrip(b"=").decode()
-        state = secrets.token_urlsafe(16)
-
-        auth_url = (
-            f"{HANPLANET_BASE}/o/authorize?"
+        login_url = (
+            f"{HANPLANET_BASE}/login/handrive?"
             + urlencode({
-                "response_type":         "code",
-                "client_id":             CLIENT_ID,
-                "redirect_uri":          REDIRECT_URI,
-                "state":                 state,
-                "code_challenge":        code_challenge,
-                "code_challenge_method": "S256",
+                "state":       state,
+                "client_name": "OpenHarness CLI",
             })
         )
+        poll_url = (
+            f"{HANPLANET_BASE}/api/sync/auth/handrive-callback?"
+            + urlencode({"state": state})
+        )
 
-        loop = asyncio.get_running_loop()
-        code_future: asyncio.Future[str] = loop.create_future()
-
-        async def _handle_callback(
-            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-        ) -> None:
-            try:
-                data = await asyncio.wait_for(reader.read(4096), timeout=10)
-                first_line = data.decode(errors="ignore").split("\n")[0]
-                parts = first_line.split(" ")
-                if len(parts) >= 2:
-                    parsed = urlparse(parts[1])
-                    # /callback 이외의 요청(favicon.ico 등)은 무시
-                    if parsed.path != "/callback":
-                        writer.write(b"HTTP/1.1 204 No Content\r\n\r\n")
-                        return
-                    params = parse_qs(parsed.query)
-                    code        = (params.get("code")  or [None])[0]
-                    recv_state  = (params.get("state") or [None])[0]
-                    if recv_state == state and code and not code_future.done():
-                        body_html = (
-                            "HTTP/1.1 200 OK\r\nContent-Type: text/html;charset=utf-8\r\n\r\n"
-                            "<html><body style='font-family:sans-serif;text-align:center;padding:48px'>"
-                            "<h2>✅ 인증 완료!</h2>"
-                            "<p>이 창을 닫아도 됩니다.</p>"
-                            "</body></html>"
-                        ).encode("utf-8")
-                        writer.write(body_html)
-                        code_future.set_result(code)
-                    elif not code_future.done():
-                        writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\nInvalid state")
-                        code_future.set_exception(Exception("Invalid OAuth callback"))
-                    else:
-                        writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\nInvalid state")
-            except Exception as exc:
-                if not code_future.done():
-                    code_future.set_exception(exc)
-            finally:
-                with contextlib.suppress(Exception):
-                    await writer.drain()
-                    writer.close()
-
-        try:
-            server = await asyncio.start_server(_handle_callback, "127.0.0.1", REDIRECT_PORT)
-        except OSError:
-            await self._emit(BackendEvent(
-                type="error",
-                message=f"포트 {REDIRECT_PORT}를 사용할 수 없습니다. 다른 프로세스가 점유 중입니다.",
-            ))
-            await self._emit(BackendEvent(type="line_complete"))
-            return
-
+        # URL을 먼저 출력 (브라우저가 자동으로 안 열릴 경우 직접 열 수 있도록)
+        await self._emit(BackendEvent(
+            type="info",
+            message=f"Hanplanet 로그인 URL: {login_url}",
+        ))
         await self._emit(BackendEvent(
             type="oauth_pending",
-            message="브라우저를 열어 Hanplanet 로그인 페이지로 이동합니다…",
+            message="브라우저에서 위 URL을 열어 연결 버튼을 눌러주세요…",
             timeout_seconds=300,
         ))
-        webbrowser.open(auth_url)
 
+        # 크로스플랫폼 브라우저 열기 시도
         try:
-            async with server:
-                code = await asyncio.wait_for(code_future, timeout=300)
-                await asyncio.sleep(2)  # favicon.ico 등 후속 요청 처리 후 서버 닫기
+            plat = platform.system()
+            if plat == "Darwin":
+                subprocess.Popen(["open", login_url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif plat == "Windows":
+                subprocess.Popen(["start", "", login_url], shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                subprocess.Popen(["xdg-open", login_url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+        # 사용자가 브라우저에서 "연결" 버튼을 클릭할 때까지 폴링 (최대 300초)
+        try:
+            import httpx
+            deadline = asyncio.get_running_loop().time() + 300
+            tokens = None
+            async with httpx.AsyncClient(timeout=10) as client:
+                while asyncio.get_running_loop().time() < deadline:
+                    await asyncio.sleep(2)
+                    try:
+                        resp = await client.get(poll_url)
+                    except Exception:
+                        continue
+                    if resp.status_code == 200:
+                        tokens = resp.json()
+                        break
+                    # 202 → pending, 계속 폴링
+            if tokens is None:
+                raise asyncio.TimeoutError
         except asyncio.TimeoutError:
             await self._emit(BackendEvent(type="error", message="인증 시간 초과 (300초). 다시 시도해주세요."))
             await self._emit(BackendEvent(type="line_complete"))
@@ -1317,36 +1285,16 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="line_complete"))
             return
 
-        # Authorization code → access token
-        try:
-            import httpx
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(
-                    f"{HANPLANET_BASE}/o/token/",
-                    data={
-                        "grant_type":    "authorization_code",
-                        "code":          code,
-                        "redirect_uri":  REDIRECT_URI,
-                        "client_id":     CLIENT_ID,
-                        "code_verifier": code_verifier,
-                    },
-                )
-            token_data = resp.json()
-        except Exception as exc:
-            await self._emit(BackendEvent(type="error", message=f"토큰 발급 실패: {exc}"))
-            await self._emit(BackendEvent(type="line_complete"))
-            return
-
-        access_token = token_data.get("access_token")
+        access_token = tokens.get("access_token")
+        refresh_token = tokens.get("refresh_token")
         if not access_token:
-            err = token_data.get("error_description") or token_data.get("error") or str(token_data)
-            await self._emit(BackendEvent(type="error", message=f"토큰 발급 실패: {err}"))
+            await self._emit(BackendEvent(type="error", message="토큰 발급 실패: access_token 없음"))
             await self._emit(BackendEvent(type="line_complete"))
             return
 
-        await self._hanplanet_save_and_select(access_token)
+        await self._hanplanet_save_and_select(access_token, refresh_token=refresh_token)
 
-    async def _hanplanet_save_and_select(self, api_key: str) -> None:
+    async def _hanplanet_save_and_select(self, api_key: str, refresh_token: str | None = None) -> None:
         """Save Hanplanet API key, create/update profile, then show model picker."""
         from openharness.auth.manager import AuthManager
         from openharness.config.settings import ProviderProfile, load_settings
@@ -1367,6 +1315,8 @@ class ReactBackendHost:
         try:
             manager.upsert_profile("hanplanet", profile)
             manager.store_profile_credential("hanplanet", "api_key", api_key)
+            if refresh_token:
+                manager.store_profile_credential("hanplanet", "refresh_token", refresh_token)
         except Exception as exc:
             await self._emit(BackendEvent(type="error", message=f"프로필 저장 실패: {exc}"))
             await self._emit(BackendEvent(type="line_complete"))
