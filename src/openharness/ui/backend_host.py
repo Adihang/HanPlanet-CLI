@@ -1303,6 +1303,7 @@ class ReactBackendHost:
                         tokens = resp.json()
                         break
                     # 202 → pending, 계속 폴링
+                    # cancelled 응답은 즉시 종료
             if tokens is None:
                 raise asyncio.TimeoutError
         except asyncio.TimeoutError:
@@ -1311,6 +1312,11 @@ class ReactBackendHost:
             return
         except Exception as exc:
             await self._emit(BackendEvent(type="error", message=f"OAuth 실패: {exc}"))
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+
+        if tokens.get("status") == "cancelled":
+            await self._emit(BackendEvent(type="info", message="연결이 취소됐습니다."))
             await self._emit(BackendEvent(type="line_complete"))
             return
 
