@@ -739,6 +739,23 @@ class ReactBackendHost:
             return
 
         if command == "model":
+            if getattr(active_profile, "credential_slot", None) == "hanplanet":
+                from openharness.auth.storage import load_credential
+                existing_key = load_credential("hanplanet", "api_key") or ""
+                if existing_key:
+                    models = await self._fetch_hanplanet_models(existing_key)
+                    if models:
+                        hp_current = display_model_setting(active_profile)
+                        options = [
+                            {"value": m, "label": m, "description": "🏔 Hanplanet", "active": m == hp_current}
+                            for m in models
+                        ]
+                        await self._emit(BackendEvent(
+                            type="select_request",
+                            modal={"kind": "select", "title": "🏔 Hanplanet 모델", "command": "model"},
+                            select_options=options,
+                        ))
+                        return
             options = self._model_select_options(current_model, active_profile.provider, active_profile.allowed_models)
             await self._emit(
                 BackendEvent(
