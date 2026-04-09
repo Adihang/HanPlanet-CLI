@@ -369,7 +369,11 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="error", message=f"Unknown select command: {command_name}"))
             await self._emit(BackendEvent(type="line_complete"))
             return True
-        return await self._process_line(line, transcript_line=f"/{command}")
+        result = await self._process_line(line, transcript_line=f"/{command}")
+        # 프로바이더 전환 후 자동으로 모델 선택 화면 표시
+        if command == "provider":
+            await self._handle_select_command("model")
+        return result
 
     def _build_select_command_line(self, command: str, value: str) -> str | None:
         if command == "provider":
