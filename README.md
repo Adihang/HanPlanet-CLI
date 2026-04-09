@@ -223,31 +223,4 @@ git checkout --ours pyproject.toml
 git add src/openharness/prompts/system_prompt.py pyproject.toml
 ```
 
-`backend_host.py`는 원본 로직도 포함되어 있으므로 파일 전체를 `--ours`로 처리하지 말고 **충돌 구간을 직접 확인하며 병합**한다.
-
-#### 업스트림 버전(theirs)을 우선해야 하는 파일
-
-아래 영역은 upstream 업데이트를 적극 수용한다.
-
-- `src/openharness/commands/registry.py` — 슬래시 커맨드 로직
-- `src/openharness/engine/` — 모델 작동 로직, 최적화
-- `src/openharness/api/` — API 클라이언트
-- `src/openharness/tools/` — 툴 구현
-- `src/openharness/config/settings.py` — 설정 스키마
-- 그 외 나머지 파일 전반
-
-충돌 해결 명령어 예시 (파일 전체를 upstream 버전으로):
-
-```bash
-git checkout --theirs src/openharness/commands/registry.py
-git add src/openharness/commands/registry.py
-```
-
-### 병합 완료 후 확인
-
-```bash
-# 커스텀 내용이 남아있는지 확인
-grep -n "HanHarness" src/openharness/prompts/system_prompt.py
-grep -n "hanplanet" pyproject.toml
-grep -n "_hanplanet_oauth_flow\|HANPLANET\|_VISIBLE_PROFILES" src/openharness/ui/backend_host.py
-```
+`backend_host.py`는 원본 로직도 포함되어 있으므로 파일 전체를 `--ours`로 처리하지 말고 **충돌 구간을 직접 확인하며 병합**한다
