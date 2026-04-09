@@ -490,7 +490,7 @@ class ReactBackendHost:
                 {
                     "value": name,
                     "label": info["label"],
-                    "description": f"{info['provider']} / {info['auth_source']}" + (" [missing auth]" if not info["configured"] else ""),
+                    "description": ("Hanplanet / Hanplanet oauth, key" if name == "hanplanet" else f"{info['provider']} / {info['auth_source']}") + (" [missing auth]" if not info["configured"] else ""),
                     "active": info["active"],
                 }
                 for name, info in statuses.items()
