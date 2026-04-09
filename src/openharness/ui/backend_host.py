@@ -286,6 +286,8 @@ class ReactBackendHost:
         async def _clear_output() -> None:
             await self._emit(BackendEvent(type="clear_transcript"))
 
+        await self._maybe_refresh_hanplanet_token()
+
         should_continue = await handle_line(
             self._bundle,
             line,
@@ -1369,6 +1371,56 @@ class ReactBackendHost:
             select_options=options,
         ))
 
+    async def _maybe_refresh_hanplanet_token(self) -> None:
+        """Hanplanet 프로파일 사용 중이면 access token 만료 여부를 확인하고 필요 시 refresh."""
+        assert self._bundle is not None
+        settings = self._bundle.current_settings()
+        _, active_profile = settings.resolve_profile()
+        if getattr(active_profile, "credential_slot", None) != "hanplanet":
+            return
+        try:
+            import base64, json as _json, time
+            from openharness.auth.storage import load_credential
+            token = load_credential("profile:hanplanet", "api_key") or ""
+            if not token:
+                return
+            # JWT payload는 두 번째 세그먼트
+            padding = token.split(".")[1] if token.count(".") == 2 else ""
+            padding += "=" * (-len(padding) % 4)
+            payload = _json.loads(base64.urlsafe_b64decode(padding))
+            exp = payload.get("exp", 0)
+            # 만료까지 5분 이하 남았으면 미리 refresh
+            if exp - time.time() < 300:
+                new_token = await ReactBackendHost._hanplanet_refresh_token()
+                if new_token:
+                    from openharness.ui.runtime import refresh_runtime_client
+                    refresh_runtime_client(self._bundle)
+        except Exception:
+            pass
+
+    @staticmethod
+    async def _hanplanet_refresh_token() -> str | None:
+        """refresh token으로 새 access token 발급 후 저장. 실패 시 None 반환."""
+        try:
+            from openharness.auth.storage import load_credential, store_credential
+            import httpx
+            refresh_token = load_credential("profile:hanplanet", "refresh_token")
+            if not refresh_token:
+                return None
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    "https://hanplanet.com/api/sync/auth/refresh",
+                    json={"refresh_token": refresh_token},
+                )
+            if resp.status_code != 200:
+                return None
+            new_access = resp.json().get("access_token")
+            if new_access:
+                store_credential("profile:hanplanet", "api_key", new_access)
+            return new_access
+        except Exception:
+            return None
+
     @staticmethod
     async def _fetch_hanplanet_models(api_key: str) -> list[str]:
         try:
@@ -1378,6 +1430,15 @@ class ReactBackendHost:
                     "https://hanplanet.com/ai/v1/models",
                     headers={"Authorization": f"Bearer {api_key}"},
                 )
+            if resp.status_code == 401:
+                new_key = await ReactBackendHost._hanplanet_refresh_token()
+                if not new_key:
+                    return []
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.get(
+                        "https://hanplanet.com/ai/v1/models",
+                        headers={"Authorization": f"Bearer {new_key}"},
+                    )
             body = resp.json()
             data = body.get("data") or [{"id": m} for m in body.get("models", [])]
             return [m["id"] for m in data if m.get("id")]
