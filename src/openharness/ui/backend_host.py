@@ -352,7 +352,7 @@ class ReactBackendHost:
         # /provider hanplanet → trigger auth flow if no credential stored
         if command == "provider" and selected == "hanplanet":
             from openharness.auth.storage import load_credential
-            cred = load_credential("hanplanet", "api_key")
+            cred = load_credential("profile:hanplanet", "api_key")
             if not cred:
                 await self._handle_select_command("model-for-hanplanet")
                 return True
@@ -689,7 +689,7 @@ class ReactBackendHost:
 
         if command == "model-for-hanplanet":
             from openharness.auth.storage import load_credential
-            existing_key = load_credential("hanplanet", "api_key") or ""
+            existing_key = load_credential("profile:hanplanet", "api_key") or ""
             if existing_key:
                 models = await self._fetch_hanplanet_models(existing_key)
                 if models:
@@ -741,7 +741,7 @@ class ReactBackendHost:
         if command == "model":
             if getattr(active_profile, "credential_slot", None) == "hanplanet":
                 from openharness.auth.storage import load_credential
-                existing_key = load_credential("hanplanet", "api_key") or ""
+                existing_key = load_credential("profile:hanplanet", "api_key") or ""
                 hp_current = display_model_setting(active_profile)
                 models = await self._fetch_hanplanet_models(existing_key) if existing_key else []
                 if not models and hp_current:
