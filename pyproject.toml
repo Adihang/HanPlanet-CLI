@@ -42,7 +42,7 @@ dev = [
 ]
 
 [project.scripts]
-openharness = "openharness.cli:app"
+hanplanet = "openharness.cli:app"
 oh = "openharness.cli:app"
 ohmo = "ohmo.cli:app"
 

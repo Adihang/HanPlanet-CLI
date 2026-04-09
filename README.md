@@ -47,9 +47,9 @@ pipx install -e .
 ### 실행
 
 ```bash
-uv run oh          # 개발 환경 (TUI)
-oh                 # pipx 전역 설치 후
-oh -p "질문"       # 비대화형 모드
+uv run hanplanet          # 개발 환경 (TUI)
+hanplanet                 # pipx 전역 설치 후
+hanplanet -p "질문"       # 비대화형 모드
 ```
 
 ---
