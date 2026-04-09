@@ -489,6 +489,7 @@ class ReactBackendHost:
         current_model = display_model_setting(active_profile)
 
         if command == "provider":
+            _VISIBLE_PROFILES = {"ollama", "hanplanet"}
             statuses = AuthManager(settings).get_profile_statuses()
             options = [
                 {
@@ -498,6 +499,7 @@ class ReactBackendHost:
                     "active": info["active"],
                 }
                 for name, info in statuses.items()
+                if name in _VISIBLE_PROFILES or info["active"]
             ]
             await self._emit(
                 BackendEvent(
