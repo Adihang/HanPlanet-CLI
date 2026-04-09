@@ -676,7 +676,7 @@ class ReactBackendHost:
                 {"value": "moonshot",  "label": "🌙  Moonshot / Kimi",     "description": "kimi-k2.5, kimi-k2-turbo",             "active": active_profile.provider == "moonshot"},
                 {"value": "groq",      "label": "⚡  Groq",                "description": "llama-3.3-70b, mixtral",               "active": active_profile.provider == "groq"},
                 {"value": "mistral",     "label": "🌊  Mistral",             "description": "mistral-large, codestral",             "active": active_profile.provider == "mistral"},
-                {"value": "hanplanet",   "label": "🏔  Hanplanet",            "description": "hanplanet.com 원격 모델 (OAuth / API 키)",  "active": active_profile.provider == "hanplanet"},
+                {"value": "hanplanet",   "label": "🏔  Hanplanet",            "description": "Hanplanet / Hanplanet copilot_oauth, key",  "active": active_profile.provider == "hanplanet"},
             ]
             await self._emit(
                 BackendEvent(
