@@ -1314,6 +1314,7 @@ class ReactBackendHost:
         )
         try:
             manager.upsert_profile("hanplanet", profile)
+            manager.use_profile("hanplanet")
             manager.store_profile_credential("hanplanet", "api_key", api_key)
             if refresh_token:
                 manager.store_profile_credential("hanplanet", "refresh_token", refresh_token)
