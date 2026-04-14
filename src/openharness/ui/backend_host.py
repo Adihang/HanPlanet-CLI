@@ -1319,13 +1319,23 @@ class ReactBackendHost:
             import httpx
             deadline = asyncio.get_running_loop().time() + 300
             tokens = None
+            poll_count = 0
             async with httpx.AsyncClient(timeout=10) as client:
                 while asyncio.get_running_loop().time() < deadline:
                     await asyncio.sleep(2)
+                    poll_count += 1
                     try:
                         resp = await client.get(poll_url)
-                    except Exception:
+                    except Exception as poll_exc:
+                        await self._emit(BackendEvent(
+                            type="status",
+                            message=f"[OAuth] 폴링 #{poll_count} 실패: {poll_exc}",
+                        ))
                         continue
+                    await self._emit(BackendEvent(
+                        type="status",
+                        message=f"[OAuth] 폴링 #{poll_count} → HTTP {resp.status_code}: {resp.text[:120]}",
+                    ))
                     if resp.status_code == 200:
                         tokens = resp.json()
                         break
