@@ -1328,12 +1328,12 @@ class ReactBackendHost:
                         resp = await client.get(poll_url)
                     except Exception as poll_exc:
                         await self._emit(BackendEvent(
-                            type="status",
+                            type="info",
                             message=f"[OAuth] 폴링 #{poll_count} 실패: {poll_exc}",
                         ))
                         continue
                     await self._emit(BackendEvent(
-                        type="status",
+                        type="info",
                         message=f"[OAuth] 폴링 #{poll_count} → HTTP {resp.status_code}: {resp.text[:120]}",
                     ))
                     if resp.status_code == 200:
