@@ -157,7 +157,11 @@ def _convert_assistant_message(msg: ConversationMessage) -> dict[str, Any]:
     openai_msg: dict[str, Any] = {"role": "assistant"}
 
     content = "".join(text_parts)
-    openai_msg["content"] = content if content else None
+    # Tool-call messages may have null content (some providers require it).
+    # Plain text messages must use "" rather than null — Ollama/llama.cpp
+    # returns 400 when replaying a history that contains null-content messages
+    # without tool_calls (e.g. an empty response after a mid-stream OOM crash).
+    openai_msg["content"] = content if content else (None if tool_uses else "")
 
     # Replay reasoning_content for thinking models (stored by streaming parser)
     reasoning = getattr(msg, "_reasoning", None)
@@ -225,14 +229,26 @@ class OpenAICompatibleClient:
         last_error: Exception | None = None
 
         for attempt in range(MAX_RETRIES + 1):
+            # Buffer text deltas so we don't yield partial output on a failed
+            # attempt — the caller would accumulate duplicates if we retried
+            # after already streaming some tokens.
+            buffered: list[ApiStreamEvent] = []
             try:
                 async for event in self._stream_once(request):
-                    yield event
+                    if isinstance(event, ApiTextDeltaEvent):
+                        buffered.append(event)
+                    else:
+                        # Flush buffered text deltas before the final event
+                        for b in buffered:
+                            yield b
+                        buffered.clear()
+                        yield event
                 return
             except OpenHarnessApiError:
                 raise
             except Exception as exc:
                 last_error = exc
+                buffered.clear()  # discard partial tokens from this attempt
                 if attempt >= MAX_RETRIES or not self._is_retryable(exc):
                     raise self._translate_error(exc) from exc
 
