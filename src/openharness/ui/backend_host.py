@@ -1319,23 +1319,13 @@ class ReactBackendHost:
             import httpx
             deadline = asyncio.get_running_loop().time() + 300
             tokens = None
-            poll_count = 0
             async with httpx.AsyncClient(timeout=10) as client:
                 while asyncio.get_running_loop().time() < deadline:
                     await asyncio.sleep(2)
-                    poll_count += 1
                     try:
                         resp = await client.get(poll_url)
-                    except Exception as poll_exc:
-                        await self._emit(BackendEvent(
-                            type="info",
-                            message=f"[OAuth] 폴링 #{poll_count} 실패: {poll_exc}",
-                        ))
+                    except Exception:
                         continue
-                    await self._emit(BackendEvent(
-                        type="info",
-                        message=f"[OAuth] 폴링 #{poll_count} → HTTP {resp.status_code}: {resp.text[:120]}",
-                    ))
                     if resp.status_code == 200:
                         tokens = resp.json()
                         break
@@ -1368,6 +1358,13 @@ class ReactBackendHost:
 
     async def _hanplanet_save_and_select(self, api_key: str, refresh_token: str | None = None) -> None:
         """Save Hanplanet API key, create/update profile, then show model picker."""
+        try:
+            await self._hanplanet_save_and_select_inner(api_key, refresh_token)
+        except Exception as exc:
+            await self._emit(BackendEvent(type="error", message=f"Hanplanet 설정 실패: {exc}"))
+            await self._emit(BackendEvent(type="line_complete"))
+
+    async def _hanplanet_save_and_select_inner(self, api_key: str, refresh_token: str | None = None) -> None:
         from openharness.auth.manager import AuthManager
         from openharness.config.settings import ProviderProfile, load_settings
 
@@ -1384,23 +1381,18 @@ class ReactBackendHost:
             base_url="https://hanplanet.com/ai/v1",
             credential_slot="hanplanet",
         )
-        try:
-            manager.upsert_profile("hanplanet", profile)
-            manager.use_profile("hanplanet")
-            manager.store_profile_credential("hanplanet", "api_key", api_key)
-            if refresh_token:
-                manager.store_profile_credential("hanplanet", "refresh_token", refresh_token)
-        except Exception as exc:
-            await self._emit(BackendEvent(type="error", message=f"프로필 저장 실패: {exc}"))
-            await self._emit(BackendEvent(type="line_complete"))
-            return
+        manager.upsert_profile("hanplanet", profile)
+        manager.use_profile("hanplanet")
+        manager.store_profile_credential("hanplanet", "api_key", api_key)
+        if refresh_token:
+            manager.store_profile_credential("hanplanet", "refresh_token", refresh_token)
 
         # Fetch models using the new key
         models = await self._fetch_hanplanet_models(api_key)
         if not models:
             await self._emit(BackendEvent(
-                type="error",
-                message="✅ 인증은 완료됐지만 모델 목록을 가져올 수 없습니다. hanplanet.com/ai/v1/models 를 확인해주세요.",
+                type="info",
+                message="✅ Hanplanet 인증 완료! 모델 목록을 가져올 수 없어 기본 모델을 사용합니다.",
             ))
             await self._emit(BackendEvent(type="line_complete"))
             return
