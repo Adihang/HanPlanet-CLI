@@ -378,6 +378,7 @@ class ReactBackendHost:
                 modal={"kind": "select", "title": "🏔 Hanplanet 인증 방법 선택", "command": "hanplanet-auth"},
                 select_options=options,
             ))
+            await self._emit(BackendEvent(type="line_complete"))
             return True
 
         line = self._build_select_command_line(command, selected)

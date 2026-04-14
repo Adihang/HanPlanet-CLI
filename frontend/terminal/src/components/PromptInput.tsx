@@ -5,8 +5,6 @@ import TextInput from 'ink-text-input';
 import {useTheme} from '../theme/ThemeContext.js';
 import {Spinner} from './Spinner.js';
 
-const RUNNING_HINT_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
 const noop = (): void => {};
 
 export function PromptInput({
@@ -31,15 +29,8 @@ export function PromptInput({
 	return (
 		<Box flexDirection="column">
 			{busy ? (
-				<Box flexDirection="column" marginBottom={0}>
-					<Box>
-						<Spinner label={statusLabel ?? (toolName ? `Running ${toolName}...` : 'Running...')} />
-					</Box>
-					<Box>
-						<Text color={theme.colors.warning} bold>
-							{RUNNING_HINT_FRAMES.join(' ')} Agent is working…
-						</Text>
-					</Box>
+				<Box marginBottom={0}>
+					<Spinner label={statusLabel ?? (toolName ? `Running ${toolName}...` : 'Running...')} />
 				</Box>
 			) : null}
 			<Box>
