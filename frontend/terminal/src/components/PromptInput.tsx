@@ -30,7 +30,7 @@ export function PromptInput({
 		<Box flexDirection="column">
 			{busy ? (
 				<Box marginBottom={0}>
-					<Spinner label={statusLabel ?? (toolName ? `Running ${toolName}...` : 'Running...')} />
+					<Spinner label={statusLabel ?? (toolName ? `Running ${toolName}...` : undefined)} />
 				</Box>
 			) : null}
 			<Box>
