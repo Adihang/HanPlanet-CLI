@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from openharness.api.client import SupportsStreamingMessages
 from openharness.auth.manager import AuthManager
-from openharness.config.settings import CLAUDE_MODEL_ALIAS_OPTIONS, resolve_model_setting
+from openharness.config.settings import CLAUDE_MODEL_ALIAS_OPTIONS, display_model_setting, resolve_model_setting
 from openharness.bridge import get_bridge_manager
 from openharness.memory import list_memory_files
 from openharness.plugins import load_plugins
