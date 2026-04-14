@@ -492,7 +492,7 @@ async def run_query(
                     final_message = event.message
                     usage = event.usage
         except Exception as exc:
-            error_msg = str(exc)
+            error_msg = str(exc).strip() or repr(exc)
             if not reactive_compact_attempted and _is_prompt_too_long_error(exc):
                 reactive_compact_attempted = True
                 yield StatusEvent(message=REACTIVE_COMPACT_STATUS_MESSAGE), None

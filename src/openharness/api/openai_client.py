@@ -427,6 +427,32 @@ class OpenAICompatibleClient:
     def _translate_error(exc: Exception) -> OpenHarnessApiError:
         status = getattr(exc, "status_code", None)
         msg = str(exc)
+
+        # OpenAI SDK 예외는 str()이 빈 문자열일 수 있음 (빈 body, null message 등)
+        # → body / response / repr 등에서 더 유용한 정보를 추출
+        if not msg.strip():
+            body = getattr(exc, "body", None)
+            if isinstance(body, dict):
+                inner = body.get("error") or body.get("message") or ""
+                if isinstance(inner, dict):
+                    inner = inner.get("message") or inner.get("type") or ""
+                msg = str(inner).strip()
+            if not msg:
+                response = getattr(exc, "response", None)
+                if response is not None:
+                    try:
+                        raw = response.text if hasattr(response, "text") else ""
+                        msg = raw[:200].strip()
+                    except Exception:
+                        pass
+            if not msg:
+                # 최후 수단: repr로 예외 타입이라도 보여줌
+                msg = repr(exc)
+
+        # HTTP status가 있으면 앞에 붙여 어떤 오류인지 명확히
+        if status and not msg.startswith(str(status)):
+            msg = f"HTTP {status}: {msg}"
+
         if status == 401 or status == 403:
             return AuthenticationFailure(msg)
         if status == 429:
