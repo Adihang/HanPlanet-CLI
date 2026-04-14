@@ -10,6 +10,7 @@ import pytest
 
 from openharness.api.client import ApiMessageCompleteEvent
 from openharness.api.usage import UsageSnapshot
+from openharness.engine.stream_events import CompactProgressEvent
 from openharness.engine.messages import ConversationMessage, TextBlock
 from openharness.ui.backend_host import BackendHostConfig, ReactBackendHost, run_backend_host
 from openharness.ui.protocol import BackendEvent
@@ -172,6 +173,50 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
+        del bundle, line, print_system, clear_output
+        await render_event(
+            CompactProgressEvent(
+                phase="compact_start",
+                trigger="auto",
+                message="Compacting conversation memory.",
+                checkpoint="compact_start",
+                metadata={"token_count": 12345},
+            )
+        )
+        return True
+
+    monkeypatch.setattr("openharness.ui.backend_host.handle_line", _fake_handle_line)
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line("hi")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert any(
+        event.type == "compact_progress"
+        and event.compact_phase == "compact_start"
+        and event.compact_checkpoint == "compact_start"
+        and event.compact_metadata == {"token_count": 12345}
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
 async def test_backend_host_surfaces_query_errors(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
@@ -239,6 +284,33 @@ async def test_backend_host_command_does_not_reset_cli_overrides(tmp_path, monke
         # CLI overrides should remain in effect.
         assert host._bundle.app_state.get().model == "5.4"
         assert host._bundle.app_state.get().provider == "openai-compatible"
+    finally:
+        await close_runtime(host._bundle)
+
+
+@pytest.mark.asyncio
+async def test_backend_host_uses_effective_model_from_env_override(tmp_path, monkeypatch):
+    """Regression: header model should reflect effective env override, not stale profile last_model."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("OPENHARNESS_MODEL", "minimax-m1")
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        assert host._bundle.app_state.get().model == "minimax-m1"
+
+        # Exercise sync_app_state through a slash command refresh path.
+        await host._process_line("/fast show")
+        assert host._bundle.app_state.get().model == "minimax-m1"
     finally:
         await close_runtime(host._bundle)
 

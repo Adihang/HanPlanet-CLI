@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import httpx
+
 import pytest
 
 from openharness.api.client import ApiMessageRequest
@@ -11,6 +13,7 @@ from openharness.api.openai_client import (
     OpenAICompatibleClient,
     _convert_messages_to_openai,
     _convert_tools_to_openai,
+    _normalize_openai_base_url,
     _token_limit_param_for_model,
 )
 from openharness.engine.messages import (
@@ -194,6 +197,17 @@ class TestConvertMessagesToOpenai:
         assert result[1]["tool_call_id"] == "c2"
 
 
+class TestNormalizeOpenAIBaseUrl:
+    def test_preserves_explicit_v1_path(self):
+        assert _normalize_openai_base_url("https://jarodfund.xyz/openai/v1") == "https://jarodfund.xyz/openai/v1"
+
+    def test_adds_default_v1_when_path_missing(self):
+        assert _normalize_openai_base_url("https://api.example.com") == "https://api.example.com/v1"
+
+    def test_strips_trailing_slash_without_dropping_path(self):
+        assert _normalize_openai_base_url("https://api.example.com/openai/v1/") == "https://api.example.com/openai/v1"
+
+
 class TestTokenLimitParams:
     def test_gpt5_uses_max_completion_tokens(self):
         assert _token_limit_param_for_model("gpt-5.4", 4096) == {"max_completion_tokens": 4096}
@@ -234,6 +248,70 @@ class _FakeChat:
 class _FakeOpenAIClient:
     def __init__(self) -> None:
         self.chat = _FakeChat()
+
+
+@pytest.mark.asyncio
+async def test_openai_client_uses_full_base_url_path_for_requests():
+    seen_urls: list[str] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={
+                "id": "x",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "gpt-4o-mini",
+                "choices": [],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            },
+        )
+
+    transport = httpx.MockTransport(_handler)
+    http_client = httpx.AsyncClient(transport=transport)
+    client = OpenAICompatibleClient(
+        api_key="test-key",
+        base_url="https://jarodfund.xyz/openai/v1",
+    )
+    client._client._client = http_client
+
+    request = ApiMessageRequest(
+        model="gpt-4o-mini",
+        messages=[ConversationMessage.from_user_text("Explain the codebase")],
+    )
+    events = [event async for event in client.stream_message(request)]
+
+    assert events
+    assert seen_urls == ["https://jarodfund.xyz/openai/v1/chat/completions"]
+    await http_client.aclose()
+
+
+def test_openai_client_init_normalizes_base_url(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _StubAsyncOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openharness.api.openai_client.AsyncOpenAI", _StubAsyncOpenAI)
+    OpenAICompatibleClient(api_key="test-key", base_url="https://jarodfund.xyz/openai/v1/")
+
+    assert captured["base_url"] == "https://jarodfund.xyz/openai/v1"
+
+
+def test_openai_client_init_passes_timeout(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class _StubAsyncOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openharness.api.openai_client.AsyncOpenAI", _StubAsyncOpenAI)
+    OpenAICompatibleClient(api_key="test-key", timeout=45.0)
+
+    assert captured["timeout"] == 45.0
+
 
 
 class TestStreamMessageTokenParams:

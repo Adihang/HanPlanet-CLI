@@ -1,7 +1,16 @@
-"""Secure credential storage for OpenHarness.
+"""Credential storage for OpenHarness.
 
 Default backend: ~/.openharness/credentials.json with mode 600.
-Optional backend: system keyring (if the `keyring` package is installed).
+Optional backend: system keyring (if the `keyring` package is installed
+and a usable backend is present).
+
+Security model
+--------------
+When no keyring backend is available (common in containers, CI, and WSL),
+credentials are stored as **plain-text JSON** protected only by POSIX file
+permissions (mode 600).  The ``_obfuscate`` / ``_deobfuscate`` helpers in
+this module are a lightweight XOR round-trip used elsewhere for non-secret
+data; they are **not** encryption and must not be used to protect secrets.
 """
 
 from __future__ import annotations
@@ -13,11 +22,17 @@ from pathlib import Path
 from typing import Any
 
 from openharness.config.paths import get_config_dir
+from openharness.utils.file_lock import exclusive_file_lock
+from openharness.utils.fs import atomic_write_text
 
 log = logging.getLogger(__name__)
 
 _CREDS_FILE_NAME = "credentials.json"
 _KEYRING_SERVICE = "openharness"
+
+
+def _creds_lock_path() -> Path:
+    return _creds_path().with_suffix(".json.lock")
 
 
 @dataclass(frozen=True)
@@ -53,12 +68,11 @@ def _load_creds_file() -> dict[str, Any]:
 
 def _save_creds_file(data: dict[str, Any]) -> None:
     path = _creds_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    atomic_write_text(
+        path,
+        json.dumps(data, indent=2) + "\n",
+        mode=0o600,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -66,13 +80,34 @@ def _save_creds_file(data: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _keyring_available() -> bool:
-    try:
-        import keyring  # noqa: F401
+_keyring_checked: bool = False
+_keyring_usable: bool = False
 
-        return True
+
+def _keyring_available() -> bool:
+    """Return True when a usable system keyring backend is present.
+
+    The check is cached after the first call so the "Keyring load failed"
+    warning is emitted at most once per process.
+    """
+    global _keyring_checked, _keyring_usable  # noqa: PLW0603
+    if _keyring_checked:
+        return _keyring_usable
+    _keyring_checked = True
+    try:
+        import keyring
+
+        # Probe the backend — merely importing keyring is not enough because
+        # the package may be installed without a functioning backend (e.g. on
+        # headless Linux / WSL / containers).
+        keyring.get_password(_KEYRING_SERVICE, "__probe__")
+        _keyring_usable = True
     except ImportError:
-        return False
+        _keyring_usable = False
+    except Exception as exc:
+        log.info("System keyring unavailable, using file backend: %s", exc)
+        _keyring_usable = False
+    return _keyring_usable
 
 
 def _keyring_key(provider: str, key: str) -> str:
@@ -102,9 +137,10 @@ def store_credential(provider: str, key: str, value: str, *, use_keyring: bool |
         except Exception as exc:
             log.warning("Keyring store failed, falling back to file: %s", exc)
 
-    data = _load_creds_file()
-    data.setdefault(provider, {})[key] = value
-    _save_creds_file(data)
+    with exclusive_file_lock(_creds_lock_path()):
+        data = _load_creds_file()
+        data.setdefault(provider, {})[key] = value
+        _save_creds_file(data)
     log.debug("Stored %s/%s in credentials file", provider, key)
 
 
@@ -146,10 +182,11 @@ def clear_provider_credentials(provider: str, *, use_keyring: bool | None = None
         except ImportError:
             pass
 
-    data = _load_creds_file()
-    if provider in data:
-        del data[provider]
-        _save_creds_file(data)
+    with exclusive_file_lock(_creds_lock_path()):
+        data = _load_creds_file()
+        if provider in data:
+            del data[provider]
+            _save_creds_file(data)
     log.debug("Cleared credentials for provider: %s", provider)
 
 
@@ -160,10 +197,11 @@ def list_stored_providers() -> list[str]:
 
 def store_external_binding(binding: ExternalAuthBinding) -> None:
     """Persist metadata describing an external auth source for *provider*."""
-    data = _load_creds_file()
-    entry = data.setdefault(binding.provider, {})
-    entry["external_binding"] = asdict(binding)
-    _save_creds_file(data)
+    with exclusive_file_lock(_creds_lock_path()):
+        data = _load_creds_file()
+        entry = data.setdefault(binding.provider, {})
+        entry["external_binding"] = asdict(binding)
+        _save_creds_file(data)
     log.debug("Stored external auth binding for provider: %s", binding.provider)
 
 
@@ -189,21 +227,25 @@ def load_external_binding(provider: str) -> ExternalAuthBinding | None:
 
 
 # ---------------------------------------------------------------------------
-# Encrypt/decrypt helpers (lightweight XOR obfuscation, not true encryption)
+# Obfuscation helpers (XOR round-trip — NOT encryption)
+# ---------------------------------------------------------------------------
+# These exist for lightweight obfuscation of non-secret data (e.g. session
+# tokens where the goal is to prevent casual reading, not resist attack).
+# Do NOT use for API keys or passwords — those belong in the keyring or in
+# the plain-text file protected by POSIX permissions.
 # ---------------------------------------------------------------------------
 
 
 def _obfuscation_key() -> bytes:
     """Return a per-user obfuscation key derived from the home directory path."""
     seed = str(Path.home()).encode() + b"openharness-v1"
-    # Simple repeating key stretched to 32 bytes via SHA-256 for determinism.
     import hashlib
 
     return hashlib.sha256(seed).digest()
 
 
-def encrypt(plaintext: str) -> str:
-    """Lightly obfuscate *plaintext* (base64-encoded XOR).  Not cryptographic."""
+def _obfuscate(plaintext: str) -> str:
+    """Lightly obfuscate *plaintext* (base64-encoded XOR).  **Not cryptographic.**"""
     import base64
 
     key = _obfuscation_key()
@@ -212,11 +254,16 @@ def encrypt(plaintext: str) -> str:
     return base64.urlsafe_b64encode(xored).decode("ascii")
 
 
-def decrypt(ciphertext: str) -> str:
-    """Reverse of :func:`encrypt`."""
+def _deobfuscate(ciphertext: str) -> str:
+    """Reverse of :func:`_obfuscate`."""
     import base64
 
     key = _obfuscation_key()
     data = base64.urlsafe_b64decode(ciphertext.encode("ascii"))
     xored = bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
     return xored.decode("utf-8")
+
+
+# Backward compatibility — deprecated, will be removed in a future version.
+encrypt = _obfuscate
+decrypt = _deobfuscate

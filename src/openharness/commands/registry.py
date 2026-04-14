@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -41,7 +42,13 @@ from openharness.permissions import PermissionChecker, PermissionMode
 from openharness.plugins import load_plugins
 from openharness.prompts import build_runtime_system_prompt
 from openharness.plugins.installer import install_plugin_from_path, uninstall_plugin
-from openharness.services import compact_messages, estimate_conversation_tokens, summarize_messages
+from openharness.services import (
+    build_post_compact_messages,
+    compact_conversation,
+    compact_messages,
+    estimate_conversation_tokens,
+    summarize_messages,
+)
 from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
 from openharness.skills import load_skill_registry
 from openharness.tasks import get_task_manager
@@ -94,6 +101,8 @@ class SlashCommand:
     name: str
     description: str
     handler: CommandHandler
+    remote_invocable: bool = True
+    remote_admin_opt_in: bool = False
 
 
 class CommandRegistry:
@@ -281,7 +290,7 @@ def create_default_command_registry(
         try:
             version = importlib.metadata.version("openharness")
         except importlib.metadata.PackageNotFoundError:
-            version = "0.1.5"
+            version = "0.1.6"
         return CommandResult(message=f"OpenHarness {version}")
 
     async def _context_handler(_: str, context: CommandContext) -> CommandResult:
@@ -307,7 +316,18 @@ def create_default_command_registry(
             except ValueError:
                 return CommandResult(message="Usage: /compact [PRESERVE_RECENT]")
         before = len(context.engine.messages)
-        compacted = compact_messages(context.engine.messages, preserve_recent=preserve_recent)
+        try:
+            compacted_result = await compact_conversation(
+                context.engine.messages,
+                api_client=context.engine.api_client,
+                model=context.engine.model,
+                system_prompt=context.engine.system_prompt,
+                preserve_recent=preserve_recent,
+                trigger="manual",
+            )
+            compacted = build_post_compact_messages(compacted_result)
+        except Exception:
+            compacted = compact_messages(context.engine.messages, preserve_recent=preserve_recent)
         context.engine.load_messages(compacted)
         return CommandResult(
             message=f"Compacted conversation from {before} messages to {len(compacted)}."
@@ -373,41 +393,32 @@ def create_default_command_registry(
         tokens = args.split(maxsplit=1)
         action = tokens[0] if tokens else ""
         rest = tokens[1] if len(tokens) == 2 else ""
-
-        # Direct commands with args pass through immediately
-        if action in ("list", "show", "add", "remove") and (action == "list" or rest):
-            if action == "list":
-                memory_files = list_memory_files(context.cwd)
-                if not memory_files:
-                    return CommandResult(message="No memory files.")
-                return CommandResult(message="\n".join(path.name for path in memory_files))
-            if action == "show":
-                memory_dir = get_project_memory_dir(context.cwd)
-                path = memory_dir / rest
-                if not path.exists():
-                    path = memory_dir / f"{rest}.md"
-                if not path.exists():
-                    return CommandResult(message=f"Memory entry not found: {rest}")
-                return CommandResult(message=path.read_text(encoding="utf-8"))
-            if action == "add":
-                title, separator, content = rest.partition("::")
-                if not separator or not title.strip() or not content.strip():
-                    return CommandResult(message="Usage: /memory add TITLE :: CONTENT")
-                path = add_memory_entry(context.cwd, title.strip(), content.strip())
-                return CommandResult(message=f"Added memory entry {path.name}")
-            if action == "remove":
-                if remove_memory_entry(context.cwd, rest.strip()):
-                    return CommandResult(message=f"Removed memory entry {rest.strip()}")
-                return CommandResult(message=f"Memory entry not found: {rest.strip()}")
-
-        memory_dir = get_project_memory_dir(context.cwd)
-        entrypoint = get_memory_entrypoint(context.cwd)
-        return CommandResult(
-            message=(
-                f"Memory directory: {memory_dir}\nEntrypoint: {entrypoint}\n"
-                "Usage: /memory [list|show NAME|add TITLE :: CONTENT|remove NAME]"
-            )
-        )
+        if action == "list":
+            memory_files = list_memory_files(context.cwd)
+            if not memory_files:
+                return CommandResult(message="No memory files.")
+            return CommandResult(message="\n".join(path.name for path in memory_files))
+        if action == "show" and rest:
+            memory_dir = get_project_memory_dir(context.cwd)
+            path, invalid = _resolve_memory_entry_path(memory_dir, rest)
+            if invalid:
+                return CommandResult(message="Memory entry path must stay within the project memory directory.")
+            if path is None:
+                return CommandResult(message=f"Memory entry not found: {rest}")
+            if not path.exists():
+                return CommandResult(message=f"Memory entry not found: {rest}")
+            return CommandResult(message=path.read_text(encoding="utf-8"))
+        if action == "add" and rest:
+            title, separator, content = rest.partition("::")
+            if not separator or not title.strip() or not content.strip():
+                return CommandResult(message="Usage: /memory add TITLE :: CONTENT")
+            path = add_memory_entry(context.cwd, title.strip(), content.strip())
+            return CommandResult(message=f"Added memory entry {path.name}")
+        if action == "remove" and rest:
+            if remove_memory_entry(context.cwd, rest.strip()):
+                return CommandResult(message=f"Removed memory entry {rest.strip()}")
+            return CommandResult(message=f"Memory entry not found: {rest.strip()}")
+        return CommandResult(message="Usage: /memory [list|show NAME|add TITLE :: CONTENT|remove NAME]")
 
     async def _hooks_handler(_: str, context: CommandContext) -> CommandResult:
         return CommandResult(message=context.hooks_summary or "No hooks configured.")
@@ -574,6 +585,19 @@ def create_default_command_registry(
 
     async def _agents_handler(args: str, context: CommandContext) -> CommandResult:
         tokens = args.split(maxsplit=1)
+        guide = (
+            "Subagent guide:\n"
+            "- Ask the model to delegate with the `agent` tool when the task needs background work or parallel investigation.\n"
+            '- The usual worker shape is subagent_type="worker".\n'
+            "- /agents lists known worker tasks.\n"
+            "- /agents show TASK_ID shows one worker's output and metadata.\n"
+            "- send_message(task_id=..., message=...) can continue a spawned worker.\n"
+            "- task_output(task_id=...) reads the worker's latest output."
+        )
+        if tokens and tokens[0] in {"help", "usage"}:
+            return CommandResult(
+                message=guide
+            )
         if tokens and tokens[0] == "show" and len(tokens) == 2:
             task = get_task_manager().get_task(tokens[1])
             if task is None or task.type not in {"local_agent", "remote_agent", "in_process_teammate"}:
@@ -592,7 +616,9 @@ def create_default_command_registry(
             if task.type in {"local_agent", "remote_agent", "in_process_teammate"}
         ]
         if not tasks:
-            return CommandResult(message="No active or recorded agents.")
+            return CommandResult(
+                message=f"No active or recorded agents. Run /agents help for usage.\n\n{guide}"
+            )
         lines = [
             f"{task.id} {task.type} {task.status} {task.description}"
             for task in tasks
@@ -1643,7 +1669,7 @@ def create_default_command_registry(
         try:
             version = importlib.metadata.version("openharness")
         except importlib.metadata.PackageNotFoundError:
-            version = "0.1.5"
+            version = "0.1.6"
         return CommandResult(
             message=(
                 f"Current version: {version}\n"
@@ -1786,8 +1812,24 @@ def create_default_command_registry(
     registry.register(SlashCommand("mcp", "Show MCP status", _mcp_handler))
     registry.register(SlashCommand("plugin", "Manage plugins", _plugin_handler))
     registry.register(SlashCommand("reload-plugins", "Reload plugin discovery for this workspace", _reload_plugins_handler))
-    registry.register(SlashCommand("permissions", "Show or update permission mode", _permissions_handler))
-    registry.register(SlashCommand("plan", "Toggle plan permission mode", _plan_handler))
+    registry.register(
+        SlashCommand(
+            "permissions",
+            "Show or update permission mode",
+            _permissions_handler,
+            remote_invocable=False,
+            remote_admin_opt_in=True,
+        )
+    )
+    registry.register(
+        SlashCommand(
+            "plan",
+            "Toggle plan permission mode",
+            _plan_handler,
+            remote_invocable=False,
+            remote_admin_opt_in=True,
+        )
+    )
     registry.register(SlashCommand("fast", "Show or update fast mode", _fast_handler))
     registry.register(SlashCommand("effort", "Show or update reasoning effort", _effort_handler))
     registry.register(SlashCommand("passes", "Show or update reasoning pass count", _passes_handler))
@@ -1811,6 +1853,7 @@ def create_default_command_registry(
     registry.register(SlashCommand("release-notes", "Show recent OpenHarness release notes", _release_notes_handler))
     registry.register(SlashCommand("upgrade", "Show upgrade instructions", _upgrade_handler))
     registry.register(SlashCommand("agents", "List or inspect agent and teammate tasks", _agents_handler))
+    registry.register(SlashCommand("subagents", "Show subagent usage and inspect worker tasks", _agents_handler))
     registry.register(SlashCommand("tasks", "Manage background tasks", _tasks_handler))
 
     for plugin_command in plugin_commands or ():
@@ -1843,3 +1886,39 @@ def create_default_command_registry(
             )
         )
     return registry
+
+
+def _resolve_memory_entry_path(memory_dir: Path, candidate: str) -> tuple[Path | None, bool]:
+    """Resolve a memory entry path while enforcing containment under ``memory_dir``."""
+
+    base = memory_dir.resolve()
+    resolved, invalid = _resolve_memory_candidate(base, candidate)
+    if invalid:
+        return None, True
+    if resolved is not None and resolved.exists():
+        return resolved, False
+    fallback, invalid = _resolve_memory_candidate(base, f"{candidate}.md")
+    if invalid:
+        return None, True
+    if fallback is not None and fallback.exists():
+        return fallback, False
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", candidate.strip().lower()).strip("_")
+    if slug and slug != candidate:
+        slugged, invalid = _resolve_memory_candidate(base, f"{slug}.md")
+        if invalid:
+            return None, True
+        if slugged is not None and slugged.exists():
+            return slugged, False
+    return None, False
+
+
+def _resolve_memory_candidate(memory_dir: Path, candidate: str) -> tuple[Path | None, bool]:
+    path = Path(candidate).expanduser()
+    if not path.is_absolute():
+        path = memory_dir / path
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(memory_dir)
+    except ValueError:
+        return None, True
+    return resolved, False

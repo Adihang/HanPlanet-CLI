@@ -12,12 +12,13 @@ import os
 import string
 
 from openharness.channels.bus.events import InboundMessage
-from openharness.commands import CommandContext
+from openharness.commands import CommandContext, CommandResult
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock
 from openharness.engine.query import MaxTurnsExceeded
 from openharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
+    CompactProgressEvent,
     ErrorEvent,
     StatusEvent,
     ToolExecutionCompleted,
@@ -26,6 +27,7 @@ from openharness.engine.stream_events import (
 from openharness.prompts import build_runtime_system_prompt
 from openharness.ui.runtime import RuntimeBundle, _last_user_text, build_runtime, close_runtime, start_runtime
 
+from ohmo.gateway.config import load_gateway_config
 from ohmo.prompts import build_ohmo_system_prompt
 from ohmo.session_storage import OhmoSessionBackend
 from ohmo.workspace import get_plugins_dir, get_skills_dir, initialize_workspace
@@ -80,12 +82,25 @@ class OhmoSessionRuntimePool:
         self._model = model
         self._max_turns = max_turns
         self._workspace = initialize_workspace(workspace)
+        self._gateway_config = load_gateway_config(self._workspace)
         self._session_backend = OhmoSessionBackend(self._workspace)
         self._bundles: dict[str, RuntimeBundle] = {}
 
     @property
     def active_sessions(self) -> int:
         return len(self._bundles)
+
+    def _remote_admin_allowed(self, command) -> bool:
+        if not getattr(command, "remote_admin_opt_in", False):
+            return False
+        if not self._gateway_config.allow_remote_admin_commands:
+            return False
+        allowed = {
+            str(name).strip().lower()
+            for name in self._gateway_config.allowed_remote_admin_commands
+            if str(name).strip()
+        }
+        return command.name.lower() in allowed
 
     async def get_bundle(self, session_key: str, latest_user_prompt: str | None = None) -> RuntimeBundle:
         """Return an existing bundle or create a new one."""
@@ -115,6 +130,7 @@ class OhmoSessionRuntimePool:
             session_backend=self._session_backend,
             enforce_max_turns=self._max_turns is not None,
             restore_messages=snapshot.get("messages") if snapshot else None,
+            restore_tool_metadata=snapshot.get("tool_metadata") if snapshot else None,
             extra_skill_dirs=(str(get_skills_dir(self._workspace)),),
             extra_plugin_roots=(str(get_plugins_dir(self._workspace)),),
         )
@@ -147,6 +163,29 @@ class OhmoSessionRuntimePool:
         parsed = bundle.commands.lookup(user_prompt)
         if parsed is not None and not message.media:
             command, args = parsed
+            remote_allowed = getattr(command, "remote_invocable", True)
+            if not remote_allowed and self._remote_admin_allowed(command):
+                remote_allowed = True
+                logger.warning(
+                    "ohmo gateway remote administrative command accepted channel=%s chat_id=%s sender_id=%s command=%s",
+                    message.channel,
+                    message.chat_id,
+                    message.sender_id,
+                    command.name,
+                )
+            if not remote_allowed:
+                result = CommandResult(
+                    message=f"/{command.name} is only available in the local OpenHarness UI."
+                )
+                async for update in self._stream_command_result(
+                    bundle=bundle,
+                    message=message,
+                    session_key=session_key,
+                    user_prompt=user_prompt,
+                    result=result,
+                ):
+                    yield update
+                return
             result = await command.handler(
                 args,
                 CommandContext(
@@ -326,6 +365,32 @@ class OhmoSessionRuntimePool:
         if isinstance(event, AssistantTextDelta):
             reply_parts.append(event.text)
             return
+        if isinstance(event, CompactProgressEvent):
+            logger.info(
+                "ohmo runtime compact progress session_key=%s session_id=%s phase=%s trigger=%s attempt=%s",
+                session_key,
+                bundle.session_id,
+                event.phase,
+                event.trigger,
+                event.attempt,
+            )
+            rendered = _format_channel_progress(
+                channel=message.channel,
+                kind="compact_progress",
+                text=event.message or "",
+                session_key=session_key,
+                content=content,
+                compact_phase=event.phase,
+                compact_trigger=event.trigger,
+                attempt=event.attempt,
+            )
+            if rendered:
+                yield GatewayStreamUpdate(
+                    kind="progress",
+                    text=rendered,
+                    metadata={"_progress": True, "_session_key": session_key, "_compact": True},
+                )
+            return
         if isinstance(event, StatusEvent):
             logger.info(
                 "ohmo runtime status session_key=%s session_id=%s message=%r",
@@ -398,6 +463,7 @@ class OhmoSessionRuntimePool:
             reply_parts.append(event.message.text.strip())
 
     async def _save_snapshot(self, bundle: RuntimeBundle, session_key: str, user_prompt: str) -> None:
+        tool_metadata = getattr(bundle.engine, "tool_metadata", {}) or {}
         self._session_backend.save_snapshot(
             cwd=self._cwd,
             model=bundle.current_settings().model,
@@ -406,6 +472,7 @@ class OhmoSessionRuntimePool:
             usage=bundle.engine.total_usage,
             session_id=bundle.session_id,
             session_key=session_key,
+            tool_metadata=tool_metadata,
         )
         logger.info(
             "ohmo runtime saved snapshot session_key=%s session_id=%s message_count=%s",
@@ -432,6 +499,7 @@ class OhmoSessionRuntimePool:
             session_backend=self._session_backend,
             enforce_max_turns=self._max_turns is not None,
             restore_messages=[message.model_dump(mode="json") for message in snapshot],
+            restore_tool_metadata=getattr(bundle.engine, "tool_metadata", {}) or {},
             extra_skill_dirs=(str(get_skills_dir(self._workspace)),),
             extra_plugin_roots=(str(get_plugins_dir(self._workspace)),),
         )
@@ -490,6 +558,9 @@ def _format_channel_progress(
     text: str,
     session_key: str,
     content: str,
+    compact_phase: str | None = None,
+    compact_trigger: str | None = None,
+    attempt: int | None = None,
 ) -> str:
     if channel not in {
         "feishu",
@@ -517,16 +588,63 @@ def _format_channel_progress(
             return f"🛠️ {text}"
         return text if text.startswith("🛠️ ") else f"🛠️ {text}"
     if kind == "status":
+        normalized = text.strip()
+        if normalized == "Auto-compacting conversation memory to keep things fast and focused.":
+            if prefers_chinese:
+                return "🧠 聊天有点长啦，我先帮你蹦蹦跳跳压缩一下记忆，马上带着重点回来～"
+            return "🧠 This chat is getting long — I’m doing a quick memory squeeze and hopping right back with the good bits."
         if text.startswith(("🤔", "🧠", "✨", "🔎", "🪄", "🛠️", "🫧")):
             return text
         return f"🫧 {text}"
+    if kind == "compact_progress":
+        if compact_phase == "hooks_start":
+            if prefers_chinese:
+                if compact_trigger == "reactive":
+                    return "🫧 上下文有点超长，我先准备压缩一下记忆，然后立刻继续重试～"
+                return "🫧 我先把上下文和记忆准备一下，马上开始压缩重点～"
+            if compact_trigger == "reactive":
+                return "🫧 The context got too large. I’m preparing a quick memory compaction before retrying."
+            return "🫧 Let me get the context ready before I compact the conversation."
+        if compact_phase == "context_collapse_start":
+            if prefers_chinese:
+                return "🫧 我先把太长的上下文折叠一下，让后面的压缩更快一点～"
+            return "🫧 I’m collapsing the oversized context first so compaction can move faster."
+        if compact_phase == "context_collapse_end":
+            if prefers_chinese:
+                return "🫧 上下文已经先收紧了一层，继续压缩重点～"
+            return "🫧 The context is trimmed down now. Continuing with the main compaction."
+        if compact_phase in {"session_memory_start", "compact_start"}:
+            if prefers_chinese:
+                if compact_phase == "session_memory_start":
+                    return "🧠 我先把前面的聊天重点悄悄捋顺一下，马上继续～"
+                if compact_trigger == "reactive":
+                    return "🧠 这轮上下文太长了，我先压缩一下记忆，然后马上继续重试～"
+                return "🧠 聊天有点长啦，我先帮你悄悄压缩一下记忆，马上继续～"
+            if compact_phase == "session_memory_start":
+                return "🧠 Let me quickly condense the earlier parts of this chat, then I’ll keep going."
+            if compact_trigger == "reactive":
+                return "🧠 The context is too large for this turn. I’ll compact the memory and retry."
+            return "🧠 This chat is getting long. I’ll compact the memory and keep going."
+        if compact_phase == "compact_retry":
+            suffix = f" (attempt {attempt})" if attempt is not None else ""
+            if prefers_chinese:
+                return f"🔁 压缩记忆这一步有点卡，我换个方式再试一次{suffix}。"
+            return f"🔁 Compaction got stuck, trying a lighter retry{suffix}."
+        if compact_phase == "compact_failed":
+            if prefers_chinese:
+                return "⚠️ 这次记忆压缩没成功，我先跳过它继续处理你的消息。"
+            return "⚠️ Memory compaction did not complete. I’m skipping it and continuing."
+        return ""
     return text
 
 
 def _build_inbound_user_message(message: InboundMessage) -> ConversationMessage:
     """Convert an inbound channel message into user content blocks."""
     content: list[TextBlock | ImageBlock] = []
+    speaker_context = _build_speaker_context(message)
     base = (message.content or "").strip()
+    if speaker_context:
+        content.append(TextBlock(text=speaker_context))
     if base:
         content.append(TextBlock(text=base))
 
@@ -544,6 +662,26 @@ def _build_inbound_user_message(message: InboundMessage) -> ConversationMessage:
             logger.exception("ohmo runtime failed to encode image attachment path=%s", media_path)
 
     return ConversationMessage.from_user_content(content)
+
+
+def _build_speaker_context(message: InboundMessage) -> str:
+    """Return a lightweight speaker header for group-chat messages."""
+    metadata = message.metadata or {}
+    chat_type = str(metadata.get("chat_type") or "").strip().lower()
+    sender_label = (
+        str(metadata.get("sender_display_name") or "").strip()
+        or str(metadata.get("sender_label") or "").strip()
+        or str(message.sender_id).strip()
+    )
+    if chat_type != "group":
+        return ""
+    if not sender_label:
+        sender_label = "unknown"
+    return (
+        "[Channel speaker]\n"
+        f"This message was sent in a group chat by: {sender_label}\n"
+        f"Sender id: {message.sender_id}"
+    )
 
 
 def _build_attachment_notes(media_paths: list[str]) -> str:

@@ -306,6 +306,22 @@ def _run_gateway_config_wizard(workspace: str | Path) -> GatewayConfig:
         "Send tool hints to channels?",
         default=existing.send_tool_hints,
     )
+    allow_remote_admin_commands = _confirm_prompt(
+        "Allow explicitly listed administrative slash commands from remote channels?",
+        default=existing.allow_remote_admin_commands,
+    )
+    default_allowlist = ", ".join(existing.allowed_remote_admin_commands)
+    allowed_remote_admin_commands: list[str] = []
+    if allow_remote_admin_commands:
+        allowlist_raw = _text_prompt(
+            "Allowed remote admin commands (comma-separated, e.g. permissions, plan)",
+            default=default_allowlist,
+        )
+        allowed_remote_admin_commands = [
+            item.strip().lstrip("/")
+            for item in allowlist_raw.split(",")
+            if item.strip()
+        ]
     config = existing.model_copy(
         update={
             "provider_profile": provider_profile,
@@ -313,6 +329,8 @@ def _run_gateway_config_wizard(workspace: str | Path) -> GatewayConfig:
             "channel_configs": channel_configs,
             "send_progress": send_progress,
             "send_tool_hints": send_tool_hints,
+            "allow_remote_admin_commands": allow_remote_admin_commands,
+            "allowed_remote_admin_commands": allowed_remote_admin_commands,
         }
     )
     save_gateway_config(config, workspace)
@@ -328,6 +346,13 @@ def _print_gateway_config_summary(config: GatewayConfig) -> None:
         )
     else:
         print(f"Configured provider_profile={config.provider_profile}; no channels enabled yet.")
+    if config.allow_remote_admin_commands and config.allowed_remote_admin_commands:
+        print(
+            "Remote admin opt-in enabled for: "
+            + ", ".join(f"/{name}" for name in config.allowed_remote_admin_commands)
+        )
+    else:
+        print("Remote admin commands remain local-only.")
 
 
 def _maybe_restart_gateway(*, cwd: str | Path, workspace: str | Path) -> None:
@@ -375,18 +400,21 @@ def main(
     workspace_root = initialize_workspace(workspace)
     backend = OhmoSessionBackend(workspace_root)
     restore_messages = None
+    restore_tool_metadata = None
     if continue_session:
         latest = backend.load_latest(cwd_path)
         if latest is None:
             print("No previous ohmo session found in this directory.", file=sys.stderr)
             raise typer.Exit(1)
         restore_messages = latest.get("messages")
+        restore_tool_metadata = latest.get("tool_metadata")
     elif resume:
         snapshot = backend.load_by_id(cwd_path, resume)
         if snapshot is None:
             print(f"ohmo session not found: {resume}", file=sys.stderr)
             raise typer.Exit(1)
         restore_messages = snapshot.get("messages")
+        restore_tool_metadata = snapshot.get("tool_metadata")
 
     if backend_only:
         raise SystemExit(
@@ -398,6 +426,7 @@ def main(
                     max_turns=max_turns,
                     provider_profile=profile,
                     restore_messages=restore_messages,
+                    restore_tool_metadata=restore_tool_metadata,
                 )
             )
         )

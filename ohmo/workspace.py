@@ -227,6 +227,10 @@ def get_gateway_config_path(workspace: str | Path | None = None) -> Path:
     return get_workspace_root(workspace) / "gateway.json"
 
 
+def get_gateway_restart_notice_path(workspace: str | Path | None = None) -> Path:
+    return get_workspace_root(workspace) / "gateway-restart-notice.json"
+
+
 def ensure_workspace(workspace: str | Path | None = None) -> Path:
     """Create the workspace if needed and return its root."""
     root = get_workspace_root(workspace)
@@ -279,6 +283,8 @@ def initialize_workspace(workspace: str | Path | None = None) -> Path:
                     "send_tool_hints": True,
                     "permission_mode": "default",
                     "sandbox_enabled": False,
+                    "allow_remote_admin_commands": False,
+                    "allowed_remote_admin_commands": [],
                     "log_level": "INFO",
                     "channel_configs": {},
                 },

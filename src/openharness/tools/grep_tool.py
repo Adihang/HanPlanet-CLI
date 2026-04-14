@@ -178,12 +178,24 @@ async def _rg_grep(
     # `--` ensures patterns like `-foo` aren't parsed as flags.
     cmd.extend(["--", pattern, "."])
 
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=str(root),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    from openharness.sandbox.session import get_docker_sandbox
+
+    session = get_docker_sandbox()
+    if session is not None and session.is_running:
+        process = await session.exec_command(
+            cmd,
+            cwd=root,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    else:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=str(root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=8 * 1024 * 1024,  # 8 MB per line — avoids LimitOverrunError on long lines
+        )
 
     matches: list[str] = []
     try:
@@ -234,12 +246,24 @@ async def _rg_grep_file(
         cmd.append("-i")
     cmd.extend(["--", pattern, path.name])
 
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        cwd=str(path.parent),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    from openharness.sandbox.session import get_docker_sandbox
+
+    session = get_docker_sandbox()
+    if session is not None and session.is_running:
+        process = await session.exec_command(
+            cmd,
+            cwd=path.parent,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    else:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=str(path.parent),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=8 * 1024 * 1024,  # 8 MB per line — avoids LimitOverrunError on long lines
+        )
 
     matches: list[str] = []
     try:
@@ -282,7 +306,11 @@ async def _collect_rg_matches(
 ) -> None:
     assert process.stdout is not None
     while len(matches) < limit:
-        raw = await process.stdout.readline()
+        try:
+            raw = await process.stdout.readline()
+        except ValueError:
+            # Line exceeded the stream buffer limit; skip it and continue.
+            continue
         if not raw:
             break
         line = raw.decode("utf-8", errors="replace").rstrip("\n")
@@ -300,7 +328,11 @@ async def _collect_rg_file_matches(
 ) -> None:
     assert process.stdout is not None
     while len(matches) < limit:
-        raw = await process.stdout.readline()
+        try:
+            raw = await process.stdout.readline()
+        except ValueError:
+            # Line exceeded the stream buffer limit; skip it and continue.
+            continue
         if not raw:
             break
         line = raw.decode("utf-8", errors="replace").rstrip("\n")

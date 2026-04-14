@@ -15,6 +15,8 @@ from openharness.config.settings import (
     load_settings,
     normalize_anthropic_model_name,
     save_settings,
+    strip_ansi_escape_sequences,
+    _apply_env_overrides,
 )
 
 
@@ -24,6 +26,7 @@ class TestSettings:
         assert s.api_key == ""
         assert s.model == "claude-sonnet-4-6"
         assert s.max_tokens == 16384
+        assert s.timeout == 30.0
         assert s.max_turns == 200
         assert s.fast_mode is False
         assert s.permission.mode == "default"
@@ -99,6 +102,15 @@ class TestSettings:
         path.write_text(json.dumps({}))
         s = load_settings(path)
         assert s.base_url == "https://relay.example.com/v1"
+
+    def test_env_overrides_pick_up_compact_threshold_settings(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setenv("OPENHARNESS_CONTEXT_WINDOW_TOKENS", "123456")
+        monkeypatch.setenv("OPENHARNESS_AUTO_COMPACT_THRESHOLD_TOKENS", "120000")
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps({}))
+        s = load_settings(path)
+        assert s.context_window_tokens == 123456
+        assert s.auto_compact_threshold_tokens == 120000
 
     def test_anthropic_base_url_takes_precedence_over_openai(self, tmp_path: Path, monkeypatch):
         """ANTHROPIC_BASE_URL should take precedence over OPENAI_BASE_URL."""
@@ -198,6 +210,27 @@ class TestLoadSaveSettings:
         assert materialized.api_format == "openai"
         assert materialized.model == "gpt-5"
 
+    def test_materialize_active_profile_projects_compact_threshold_settings(self):
+        settings = Settings(
+            active_profile="openai-compatible",
+            profiles={
+                "openai-compatible": ProviderProfile(
+                    label="OpenAI-Compatible API",
+                    provider="openai",
+                    api_format="openai",
+                    auth_source="openai_api_key",
+                    default_model="gpt-5.4",
+                    context_window_tokens=100000,
+                    auto_compact_threshold_tokens=90000,
+                )
+            },
+        )
+
+        materialized = settings.materialize_active_profile()
+
+        assert materialized.context_window_tokens == 100000
+        assert materialized.auto_compact_threshold_tokens == 90000
+
     def test_merge_cli_active_profile_does_not_inherit_flat_provider_fields(self):
         settings = Settings(
             active_profile="moonshot",
@@ -235,6 +268,43 @@ class TestLoadSaveSettings:
         assert updated.model == "gpt-5.4"
         assert profile.provider == "openai_codex"
         assert profile.auth_source == "codex_subscription"
+
+    def test_merge_cli_active_profile_keeps_profile_compact_threshold_settings(self):
+        settings = Settings(
+            active_profile="moonshot",
+            context_window_tokens=64000,
+            auto_compact_threshold_tokens=60000,
+            profiles={
+                "moonshot": ProviderProfile(
+                    label="Moonshot",
+                    provider="moonshot",
+                    api_format="openai",
+                    auth_source="moonshot_api_key",
+                    default_model="kimi-k2.5",
+                    last_model="kimi-k2.5",
+                    base_url="https://api.moonshot.cn/v1",
+                    context_window_tokens=64000,
+                    auto_compact_threshold_tokens=60000,
+                ),
+                "openai-compatible": ProviderProfile(
+                    label="OpenAI-Compatible API",
+                    provider="openai",
+                    api_format="openai",
+                    auth_source="openai_api_key",
+                    default_model="gpt-5.4",
+                    last_model="gpt-5.4",
+                    base_url="https://relay.example.com/v1",
+                    context_window_tokens=200000,
+                    auto_compact_threshold_tokens=180000,
+                ),
+            },
+        )
+
+        updated = settings.merge_cli_overrides(active_profile="openai-compatible")
+
+        assert updated.base_url == "https://relay.example.com/v1"
+        assert updated.context_window_tokens == 200000
+        assert updated.auto_compact_threshold_tokens == 180000
 
     def test_claude_profile_materializes_alias_to_concrete_model(self):
         settings = Settings(
@@ -380,6 +450,7 @@ def test_normalize_anthropic_model_name_matches_hermes_behavior():
         path.write_text(json.dumps({"model": "from-file", "base_url": "https://file.example"}))
         monkeypatch.setenv("ANTHROPIC_MODEL", "from-env-model")
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://env.example/anthropic")
+        monkeypatch.setenv("OPENHARNESS_TIMEOUT", "42.5")
         monkeypatch.setenv("OPENHARNESS_MAX_TURNS", "42")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-override")
         monkeypatch.setenv("OPENHARNESS_SANDBOX_ENABLED", "true")
@@ -389,6 +460,7 @@ def test_normalize_anthropic_model_name_matches_hermes_behavior():
 
         assert s.model == "from-env-model"
         assert s.base_url == "https://env.example/anthropic"
+        assert s.timeout == 42.5
         assert s.max_turns == 42
         assert s.api_key == "sk-env-override"
         assert s.sandbox.enabled is True
@@ -416,3 +488,44 @@ def test_normalize_anthropic_model_name_matches_hermes_behavior():
         assert s.sandbox.network.allowed_domains == ["github.com"]
         assert s.sandbox.filesystem.allow_write == [".", "/tmp"]
         assert s.sandbox.filesystem.deny_write == [".env"]
+
+
+class TestAnsiEscapeSequences:
+    """Tests for ANSI escape sequence handling in settings."""
+
+    def test_strip_ansi_escape_sequences(self):
+        """Test that ANSI escape sequences are properly stripped."""
+        # Normal model name should pass through unchanged
+        assert strip_ansi_escape_sequences("claude-opus-4-6") == "claude-opus-4-6"
+        # Bold formatting should be stripped
+        assert strip_ansi_escape_sequences("\x1b[1mclaude-opus-4-6\x1b[0m") == "claude-opus-4-6"
+        # Green + bold formatting should be stripped
+        assert strip_ansi_escape_sequences("\x1b[32m\x1b[1mclaude-opus-4-6\x1b[0m") == "claude-opus-4-6"
+        # Only bold prefix
+        assert strip_ansi_escape_sequences("\x1b[1mclaude-opus-4-6") == "claude-opus-4-6"
+        # Only reset suffix
+        assert strip_ansi_escape_sequences("claude-opus-4-6\x1b[0m") == "claude-opus-4-6"
+        # Empty string should return empty string
+        assert strip_ansi_escape_sequences("") == ""
+        # None should return None
+        assert strip_ansi_escape_sequences(None) is None
+
+    def test_env_override_strips_ansi_from_model(self, monkeypatch):
+        """Test that ANSI escape sequences are stripped from ANTHROPIC_MODEL env var."""
+        monkeypatch.setenv("ANTHROPIC_MODEL", "\x1b[1mclaude-opus-4-6\x1b[0m")
+        s = Settings()
+        updated = _apply_env_overrides(s)
+        assert updated.model == "claude-opus-4-6"
+
+    def test_env_override_strips_ansi_from_openharness_model(self, monkeypatch):
+        """Test that ANSI escape sequences are stripped from OPENHARNESS_MODEL env var."""
+        monkeypatch.setenv("OPENHARNESS_MODEL", "\x1b[32mclaude-sonnet-4-6\x1b[0m")
+        s = Settings()
+        updated = _apply_env_overrides(s)
+        assert updated.model == "claude-sonnet-4-6"
+
+    def test_merge_cli_overrides_strips_ansi_from_model(self):
+        """Test that ANSI escape sequences are stripped from CLI model override."""
+        s = Settings()
+        updated = s.merge_cli_overrides(model="\x1b[1mclaude-opus-4-6\x1b[0m")
+        assert updated.model == "claude-opus-4-6"

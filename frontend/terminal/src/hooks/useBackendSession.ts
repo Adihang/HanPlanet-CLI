@@ -1,4 +1,4 @@
-import {useEffect, useMemo, useRef, useState} from 'react';
+import {startTransition, useEffect, useMemo, useRef, useState} from 'react';
 import {spawn, type ChildProcessWithoutNullStreams} from 'node:child_process';
 import readline from 'node:readline';
 
@@ -16,8 +16,9 @@ import type {
 } from '../types.js';
 
 const PROTOCOL_PREFIX = 'OHJSON:';
-const ASSISTANT_DELTA_FLUSH_MS = 33;
-const ASSISTANT_DELTA_FLUSH_CHARS = 256;
+const ASSISTANT_DELTA_FLUSH_MS = 50;
+const ASSISTANT_DELTA_FLUSH_CHARS = 384;
+const TRANSCRIPT_EVENT_FLUSH_MS = 50;
 
 const stableStringify = (value: unknown): string => JSON.stringify(value);
 
@@ -32,6 +33,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	const [modal, setModal] = useState<Record<string, unknown> | null>(null);
 	const [selectRequest, setSelectRequest] = useState<{title: string; command: string; options: SelectOptionPayload[]} | null>(null);
 	const [busy, setBusy] = useState(false);
+	const [busyLabel, setBusyLabel] = useState<string | undefined>(undefined);
 	const [ready, setReady] = useState(false);
 	const [todoMarkdown, setTodoMarkdown] = useState('');
 	const [swarmTeammates, setSwarmTeammates] = useState<SwarmTeammateSnapshot[]>([]);
@@ -49,6 +51,8 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	const assistantBufferRef = useRef('');
 	const pendingAssistantDeltaRef = useRef('');
 	const assistantFlushTimerRef = useRef<NodeJS.Timeout | null>(null);
+	const pendingTranscriptItemsRef = useRef<TranscriptItem[]>([]);
+	const transcriptFlushTimerRef = useRef<NodeJS.Timeout | null>(null);
 
 	const flushAssistantDelta = (): void => {
 		const pending = pendingAssistantDeltaRef.current;
@@ -57,7 +61,30 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		}
 		pendingAssistantDeltaRef.current = '';
 		assistantBufferRef.current += pending;
-		setAssistantBuffer(assistantBufferRef.current);
+		startTransition(() => {
+			setAssistantBuffer(assistantBufferRef.current);
+		});
+	};
+
+	const flushTranscriptItems = (): void => {
+		const pending = pendingTranscriptItemsRef.current;
+		if (pending.length === 0) {
+			return;
+		}
+		pendingTranscriptItemsRef.current = [];
+		startTransition(() => {
+			setTranscript((items) => [...items, ...pending]);
+		});
+	};
+
+	const queueTranscriptItem = (item: TranscriptItem): void => {
+		pendingTranscriptItemsRef.current.push(item);
+		if (!transcriptFlushTimerRef.current) {
+			transcriptFlushTimerRef.current = setTimeout(() => {
+				transcriptFlushTimerRef.current = null;
+				flushTranscriptItems();
+			}, TRANSCRIPT_EVENT_FLUSH_MS);
+		}
 	};
 
 	const clearAssistantDelta = (): void => {
@@ -68,6 +95,14 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			assistantFlushTimerRef.current = null;
 		}
 		setAssistantBuffer('');
+	};
+
+	const clearPendingTranscriptItems = (): void => {
+		pendingTranscriptItemsRef.current = [];
+		if (transcriptFlushTimerRef.current) {
+			clearTimeout(transcriptFlushTimerRef.current);
+			transcriptFlushTimerRef.current = null;
+		}
 	};
 
 	const sendRequest = (payload: Record<string, unknown>): void => {
@@ -94,7 +129,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		const reader = readline.createInterface({input: child.stdout});
 		reader.on('line', (line) => {
 			if (!line.startsWith(PROTOCOL_PREFIX)) {
-				setTranscript((items) => [...items, {role: 'log', text: line}]);
+				queueTranscriptItem({role: 'log', text: line});
 				return;
 			}
 			const event = JSON.parse(line.slice(PROTOCOL_PREFIX.length)) as BackendEvent;
@@ -102,7 +137,8 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		});
 
 		child.on('exit', (code) => {
-			setTranscript((items) => [...items, {role: 'system', text: `backend exited with code ${code ?? 0}`}]);
+			flushTranscriptItems();
+			queueTranscriptItem({role: 'system', text: `backend exited with code ${code ?? 0}`});
 			process.exitCode = code ?? 0;
 			onExit(code);
 		});
@@ -126,6 +162,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 				clearTimeout(assistantFlushTimerRef.current);
 				assistantFlushTimerRef.current = null;
 			}
+			clearPendingTranscriptItems();
 		};
 		process.on('exit', killChild);
 		process.on('SIGINT', killChild);
@@ -145,17 +182,25 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			setReady(true);
 			const statusSnapshot = stableStringify(event.state ?? {});
 			lastStatusSnapshotRef.current = statusSnapshot;
-			setStatus(event.state ?? {});
+			startTransition(() => {
+				setStatus(event.state ?? {});
+			});
 			const tasksSnapshot = stableStringify(event.tasks ?? []);
 			lastTasksSnapshotRef.current = tasksSnapshot;
-			setTasks(event.tasks ?? []);
+			startTransition(() => {
+				setTasks(event.tasks ?? []);
+			});
 			setCommands(event.commands ?? []);
 			const mcpSnapshot = stableStringify(event.mcp_servers ?? []);
 			lastMcpSnapshotRef.current = mcpSnapshot;
-			setMcpServers(event.mcp_servers ?? []);
+			startTransition(() => {
+				setMcpServers(event.mcp_servers ?? []);
+			});
 			const bridgeSnapshot = stableStringify(event.bridge_sessions ?? []);
 			lastBridgeSnapshotRef.current = bridgeSnapshot;
-			setBridgeSessions(event.bridge_sessions ?? []);
+			startTransition(() => {
+				setBridgeSessions(event.bridge_sessions ?? []);
+			});
 			if (config.initial_prompt && !sentInitialPrompt.current) {
 				sentInitialPrompt.current = true;
 				sendRequest({type: 'submit_line', line: config.initial_prompt});
@@ -167,17 +212,23 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			const statusSnapshot = stableStringify(event.state ?? {});
 			if (statusSnapshot !== lastStatusSnapshotRef.current) {
 				lastStatusSnapshotRef.current = statusSnapshot;
-				setStatus(event.state ?? {});
+				startTransition(() => {
+					setStatus(event.state ?? {});
+				});
 			}
 			const mcpSnapshot = stableStringify(event.mcp_servers ?? []);
 			if (mcpSnapshot !== lastMcpSnapshotRef.current) {
 				lastMcpSnapshotRef.current = mcpSnapshot;
-				setMcpServers(event.mcp_servers ?? []);
+				startTransition(() => {
+					setMcpServers(event.mcp_servers ?? []);
+				});
 			}
 			const bridgeSnapshot = stableStringify(event.bridge_sessions ?? []);
 			if (bridgeSnapshot !== lastBridgeSnapshotRef.current) {
 				lastBridgeSnapshotRef.current = bridgeSnapshot;
-				setBridgeSessions(event.bridge_sessions ?? []);
+				startTransition(() => {
+					setBridgeSessions(event.bridge_sessions ?? []);
+				});
 			}
 			return;
 		}
@@ -185,12 +236,59 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			const tasksSnapshot = stableStringify(event.tasks ?? []);
 			if (tasksSnapshot !== lastTasksSnapshotRef.current) {
 				lastTasksSnapshotRef.current = tasksSnapshot;
-				setTasks(event.tasks ?? []);
+				startTransition(() => {
+					setTasks(event.tasks ?? []);
+				});
 			}
 			return;
 		}
 		if (event.type === 'transcript_item' && event.item) {
-			setTranscript((items) => [...items, event.item as TranscriptItem]);
+			queueTranscriptItem(event.item as TranscriptItem);
+			return;
+		}
+		if (event.type === 'status') {
+			const message = event.message?.trim();
+			if (!message) {
+				return;
+			}
+			queueTranscriptItem({role: 'status', text: message});
+			if (busy) {
+				setBusyLabel(message);
+			}
+			return;
+		}
+		if (event.type === 'compact_progress') {
+			const phase = String(event.compact_phase ?? '');
+			const trigger = String(event.compact_trigger ?? '');
+			const attempt = event.attempt != null ? Number(event.attempt) : undefined;
+			if (phase === 'hooks_start') {
+				setBusyLabel(
+					trigger === 'reactive'
+						? 'Preparing retry compaction…'
+						: 'Preparing conversation compaction…',
+				);
+			} else if (phase === 'context_collapse_start') {
+				setBusyLabel('Collapsing oversized context…');
+			} else if (phase === 'context_collapse_end') {
+				setBusyLabel('Context collapse complete…');
+			} else if (phase === 'session_memory_start') {
+				setBusyLabel('Condensing earlier conversation…');
+			} else if (phase === 'compact_start') {
+				setBusyLabel(
+					trigger === 'reactive'
+						? 'Context is too large. Compacting and retrying…'
+						: 'Compacting conversation memory…',
+				);
+			} else if (phase === 'compact_retry') {
+				setBusyLabel(attempt ? `Retrying compaction (${attempt})…` : 'Retrying compaction…');
+			} else if (phase === 'compact_end') {
+				setBusyLabel('Compaction complete. Continuing…');
+			} else if (phase === 'compact_failed') {
+				setBusyLabel('Compaction failed. Continuing without it…');
+			}
+			if (event.message) {
+				queueTranscriptItem({role: 'status', text: event.message!});
+			}
 			return;
 		}
 		if (event.type === 'assistant_delta') {
@@ -216,34 +314,48 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 				clearTimeout(assistantFlushTimerRef.current);
 				assistantFlushTimerRef.current = null;
 			}
+			flushTranscriptItems();
 			flushAssistantDelta();
 			const text = event.message ?? assistantBufferRef.current;
-			setTranscript((items) => [...items, {role: 'assistant', text}]);
+			startTransition(() => {
+				setTranscript((items) => [...items, {role: 'assistant', text}]);
+			});
 			clearAssistantDelta();
-			setBusy(false);
+			// Do NOT reset busy here: tool calls may follow this event.
+			// busy is reset by line_complete (the true end-of-turn signal).
+			setBusyLabel(undefined);
 			return;
 		}
 		if (event.type === 'line_complete') {
-			// If the line ended without an assistant_complete (e.g. errors), make sure we
-			// don't leave stale streaming text on screen.
+			// Final end-of-turn: clear everything, stop spinner.
 			setOauthPending(null);
 			clearAssistantDelta();
 			setBusy(false);
+			setBusyLabel(undefined);
 			return;
 		}
 		if ((event.type === 'tool_started' || event.type === 'tool_completed') && event.item) {
+			if (event.type === 'tool_started') {
+				setBusy(true);
+				setBusyLabel(`Running ${event.tool_name ?? 'tool'}...`);
+			} else {
+				setBusyLabel('Processing...');
+			}
 			const enrichedItem: TranscriptItem = {
 				...event.item,
 				tool_name: event.item.tool_name ?? event.tool_name ?? undefined,
 				tool_input: event.item.tool_input ?? undefined,
 				is_error: event.item.is_error ?? event.is_error ?? undefined,
 			};
-			setTranscript((items) => [...items, enrichedItem]);
+			queueTranscriptItem(enrichedItem);
 			return;
 		}
 		if (event.type === 'clear_transcript') {
+			flushTranscriptItems();
+			clearPendingTranscriptItems();
 			setTranscript([]);
 			clearAssistantDelta();
+			setBusyLabel(undefined);
 			return;
 		}
 		if (event.type === 'select_request') {
@@ -261,9 +373,11 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		}
 		if (event.type === 'error') {
 			setOauthPending(null);
-			setTranscript((items) => [...items, {role: 'system', text: `error: ${event.message ?? 'unknown error'}`}]);
+			flushTranscriptItems();
+			queueTranscriptItem({role: 'system', text: `error: ${event.message ?? 'unknown error'}`});
 			clearAssistantDelta();
 			setBusy(false);
+			setBusyLabel(undefined);
 			return;
 		}
 		if (event.type === 'info') {
@@ -278,22 +392,30 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		}
 		if (event.type === 'todo_update') {
 			if (event.todo_markdown != null) {
-				setTodoMarkdown(event.todo_markdown);
+				startTransition(() => {
+					setTodoMarkdown(event.todo_markdown);
+				});
 			}
 			return;
 		}
 		if (event.type === 'swarm_status') {
 			if (event.swarm_teammates != null) {
-				setSwarmTeammates(event.swarm_teammates);
+				startTransition(() => {
+					setSwarmTeammates(event.swarm_teammates);
+				});
 			}
 			if (event.swarm_notifications != null) {
-				setSwarmNotifications((prev) => [...prev, ...event.swarm_notifications!].slice(-20));
+				startTransition(() => {
+					setSwarmNotifications((prev) => [...prev, ...event.swarm_notifications!].slice(-20));
+				});
 			}
 			return;
 		}
 		if (event.type === 'plan_mode_change') {
 			if (event.plan_mode != null) {
-				setStatus((s) => ({...s, permission_mode: event.plan_mode}));
+				startTransition(() => {
+					setStatus((s) => ({...s, permission_mode: event.plan_mode}));
+				});
 			}
 			return;
 		}
@@ -314,6 +436,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			modal,
 			selectRequest,
 			busy,
+			busyLabel,
 			ready,
 			todoMarkdown,
 			swarmTeammates,
@@ -324,6 +447,6 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			setBusy,
 			sendRequest,
 		}),
-		[assistantBuffer, bridgeSessions, busy, commands, mcpServers, modal, oauthPending, ready, selectRequest, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
+		[assistantBuffer, bridgeSessions, busy, busyLabel, commands, mcpServers, modal, oauthPending, ready, selectRequest, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
 	);
 }

@@ -7,7 +7,9 @@ from typing import Iterable
 
 from openharness.config.paths import get_project_issue_file, get_project_pr_comments_file
 from openharness.config.settings import Settings
+from openharness.coordinator.coordinator_mode import get_coordinator_system_prompt, is_coordinator_mode
 from openharness.memory import find_relevant_memories, load_memory_prompt
+from openharness.personalization.rules import load_local_rules
 from openharness.prompts.claudemd import load_claude_md_prompt
 from openharness.prompts.system_prompt import build_system_prompt
 from openharness.skills.loader import load_skill_registry
@@ -43,6 +45,28 @@ def _build_skills_section(
     return "\n".join(lines)
 
 
+def _build_delegation_section() -> str:
+    """Build a concise section describing delegation and worker usage."""
+    return "\n".join(
+        [
+            "# Delegation And Subagents",
+            "",
+            "OpenHarness can delegate background work with the `agent` tool.",
+            "Use it when the user explicitly asks for a subagent, background worker, or parallel investigation, "
+            "or when the task clearly benefits from splitting off a focused worker.",
+            "",
+            "Default pattern:",
+            '- Spawn with `agent(description=..., prompt=..., subagent_type=\"worker\")`.',
+            "- Inspect running or recorded workers with `/agents`.",
+            "- Inspect one worker in detail with `/agents show TASK_ID`.",
+            "- Send follow-up instructions with `send_message(task_id=..., message=...)`.",
+            "- Read worker output with `task_output(task_id=...)`.",
+            "",
+            "Prefer a normal direct answer for simple tasks. Use subagents only when they materially help.",
+        ]
+    )
+
+
 def build_runtime_system_prompt(
     settings: Settings,
     *,
@@ -52,7 +76,13 @@ def build_runtime_system_prompt(
     extra_plugin_roots: Iterable[str | Path] | None = None,
 ) -> str:
     """Build the runtime system prompt with project instructions and memory."""
-    sections = [build_system_prompt(custom_prompt=settings.system_prompt, cwd=str(cwd))]
+    if is_coordinator_mode():
+        sections = [get_coordinator_system_prompt()]
+    else:
+        sections = [build_system_prompt(custom_prompt=settings.system_prompt, cwd=str(cwd))]
+
+    if not is_coordinator_mode() and settings.system_prompt is None:
+        sections[0] = build_system_prompt(cwd=str(cwd))
 
     if settings.language:
         sections.append(
@@ -79,12 +109,19 @@ def build_runtime_system_prompt(
         extra_plugin_roots=extra_plugin_roots,
         settings=settings,
     )
-    if skills_section:
+    if skills_section and not is_coordinator_mode():
         sections.append(skills_section)
+
+    if not is_coordinator_mode():
+        sections.append(_build_delegation_section())
 
     claude_md = load_claude_md_prompt(cwd)
     if claude_md:
         sections.append(claude_md)
+
+    local_rules = load_local_rules()
+    if local_rules:
+        sections.append(f"# Local Environment Rules\n\n{local_rules}")
 
     for title, path in (
         ("Issue Context", get_project_issue_file(cwd)),

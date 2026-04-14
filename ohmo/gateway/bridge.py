@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 
 from openharness.channels.bus.events import OutboundMessage
 from openharness.channels.bus.queue import MessageBus
@@ -52,9 +53,16 @@ def _format_gateway_error(exc: Exception) -> str:
 class OhmoGatewayBridge:
     """Consume inbound messages and publish assistant replies."""
 
-    def __init__(self, *, bus: MessageBus, runtime_pool: OhmoSessionRuntimePool) -> None:
+    def __init__(
+        self,
+        *,
+        bus: MessageBus,
+        runtime_pool: OhmoSessionRuntimePool,
+        restart_gateway: Callable[[object, str], Awaitable[None] | None] | None = None,
+    ) -> None:
         self._bus = bus
         self._runtime_pool = runtime_pool
+        self._restart_gateway = restart_gateway
         self._running = False
         self._session_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_cancel_reasons: dict[str, str] = {}
@@ -80,6 +88,9 @@ class OhmoGatewayBridge:
             )
             if message.content.strip() == "/stop":
                 await self._handle_stop(message, session_key)
+                continue
+            if message.content.strip() == "/restart":
+                await self._handle_restart(message, session_key)
                 continue
             await self._interrupt_session(
                 session_key,
@@ -119,6 +130,24 @@ class OhmoGatewayBridge:
             )
         )
 
+    async def _handle_restart(self, message, session_key: str) -> None:
+        await self._interrupt_session(
+            session_key,
+            reason="restarting gateway by user command",
+        )
+        await self._bus.publish_outbound(
+            OutboundMessage(
+                channel=message.channel,
+                chat_id=message.chat_id,
+                content="🔄 正在重启 gateway，马上回来。\nRestarting the gateway now. I'll be back in a moment.",
+                metadata={"_session_key": session_key},
+            )
+        )
+        if self._restart_gateway is not None:
+            result = self._restart_gateway(message, session_key)
+            if asyncio.iscoroutine(result):
+                await result
+
     async def _interrupt_session(
         self,
         session_key: str,
@@ -140,6 +169,10 @@ class OhmoGatewayBridge:
         return True
 
     async def _process_message(self, message, session_key: str) -> None:
+        # Preserve inbound message_id so channels can reply in-thread
+        inbound_meta = {
+            k: message.metadata[k] for k in ("message_id", "thread_id") if k in message.metadata
+        }
         try:
             reply = ""
             async for update in self._runtime_pool.stream_message(message, session_key):
@@ -161,7 +194,7 @@ class OhmoGatewayBridge:
                         channel=message.channel,
                         chat_id=message.chat_id,
                         content=update.text,
-                        metadata=update.metadata,
+                        metadata={**inbound_meta, **(update.metadata or {})},
                     )
                 )
         except asyncio.CancelledError:
@@ -203,7 +236,7 @@ class OhmoGatewayBridge:
                 channel=message.channel,
                 chat_id=message.chat_id,
                 content=reply,
-                metadata={"_session_key": session_key},
+                metadata={**inbound_meta, "_session_key": session_key},
             )
         )
 
