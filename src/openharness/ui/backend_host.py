@@ -1406,6 +1406,7 @@ class ReactBackendHost:
             modal={"kind": "select", "title": "🏔 Hanplanet 모델 선택", "command": "model"},
             select_options=options,
         ))
+        await self._emit(BackendEvent(type="line_complete"))
 
     async def _maybe_refresh_hanplanet_token(self) -> None:
         """Hanplanet 프로파일 사용 중이면 access token 만료 여부를 확인하고 필요 시 refresh."""
