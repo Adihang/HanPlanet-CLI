@@ -465,19 +465,27 @@ class ReactBackendHost:
         import time as _time
 
         assert self._bundle is not None
-        sessions = self._bundle.session_backend.list_snapshots(self._bundle.cwd, limit=10)
+        sessions = self._bundle.session_backend.list_snapshots(self._bundle.cwd, limit=20)
+        if not sessions:
+            await self._emit(BackendEvent(type="info", message="저장된 세션이 없습니다."))
+            await self._emit(BackendEvent(type="line_complete"))
+            return
         options = []
         for s in sessions:
-            ts = _time.strftime("%m/%d %H:%M", _time.localtime(s["created_at"]))
-            summary = s.get("summary", "")[:50] or "(no summary)"
+            ts = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(s["created_at"]))
+            summary = s.get("summary", "")[:60] or "(내용 없음)"
+            model = s.get("model", "")
+            msg_count = s["message_count"]
             options.append({
                 "value": s["session_id"],
-                "label": f"{ts}  {s['message_count']}msg  {summary}",
+                "label": summary,
+                "description": f"{ts}  •  {msg_count}개 메시지  •  {model}",
+                "active": False,
             })
         await self._emit(
             BackendEvent(
                 type="select_request",
-                modal={"kind": "select", "title": "Resume Session", "command": "resume"},
+                modal={"kind": "select", "title": "세션 복구", "command": "resume"},
                 select_options=options,
             )
         )

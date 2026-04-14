@@ -375,6 +375,16 @@ class OpenAICompatibleClient:
             return True
         if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
             return True
+        # Ollama / local model: stream cut mid-response (OOM, process crash, etc.)
+        msg = str(exc).lower()
+        if any(term in msg for term in (
+            "peer closed connection",
+            "incomplete chunked read",
+            "incomplete message",
+            "server disconnected",
+            "connection reset",
+        )):
+            return True
         return False
 
     @staticmethod

@@ -385,7 +385,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	}, [scriptIndex, session.busy, session.modal, selectModal]);
 
 	return (
-		<Box flexDirection="column" paddingX={1} height="100%">
+		<Box flexDirection="column" paddingX={1}>
 			{/* Conversation area */}
 			<Box flexDirection="column" flexGrow={1}>
 				<ConversationView
