@@ -313,6 +313,16 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				setInput('');
 				return;
 			}
+			// Backspace: remove last char so user can exit picker by deleting "/"
+			if (key.backspace || key.delete) {
+				setInput((prev) => prev.slice(0, -1));
+				return;
+			}
+			// Printable char: append to input so picker filters live as user types
+			if (chunk && !key.ctrl && !key.meta) {
+				setInput((prev) => prev + chunk);
+				return;
+			}
 		}
 
 		if (key.escape) {
