@@ -455,6 +455,14 @@ class Settings(BaseModel):
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     enabled_plugins: dict[str, bool] = Field(default_factory=dict)
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+    preload_skills: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Skills whose full content is injected directly into the system prompt. "
+            "Useful for models that do not reliably invoke the `skill` tool (e.g. local Ollama models). "
+            "Set to ['*'] to preload all available skills."
+        ),
+    )
 
     # UI
     theme: str = "default"

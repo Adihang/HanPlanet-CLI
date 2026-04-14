@@ -32,17 +32,42 @@ def _build_skills_section(
     skills = registry.list_skills()
     if not skills:
         return None
-    lines = [
-        "# Available Skills",
-        "",
-        "The following skills are available via the `skill` tool. "
-        "When a user's request matches a skill, invoke it with `skill(name=\"<skill_name>\")` "
-        "to load detailed instructions before proceeding.",
-        "",
-    ]
-    for skill in skills:
-        lines.append(f"- **{skill.name}**: {skill.description}")
-    return "\n".join(lines)
+
+    # Determine which skills to preload (inject full content)
+    preload_names: set[str] = set()
+    if settings is not None:
+        raw = getattr(settings, "preload_skills", None) or []
+        if raw == ["*"]:
+            preload_names = {s.name for s in skills}
+        else:
+            preload_names = {n.strip() for n in raw if n.strip()}
+
+    # Skills that are NOT preloaded → listed for on-demand tool invocation
+    on_demand = [s for s in skills if s.name not in preload_names]
+    preloaded = [s for s in skills if s.name in preload_names]
+
+    sections: list[str] = []
+
+    if on_demand:
+        lines = [
+            "# Available Skills",
+            "",
+            "The following skills are available via the `skill` tool. "
+            "When a user's request matches a skill, invoke it with `skill(name=\"<skill_name>\")` "
+            "to load detailed instructions before proceeding.",
+            "",
+        ]
+        for skill in on_demand:
+            lines.append(f"- **{skill.name}**: {skill.description}")
+        sections.append("\n".join(lines))
+
+    for skill in preloaded:
+        sections.append(
+            f"# Skill: {skill.name}\n\n"
+            f"{skill.content.strip()}"
+        )
+
+    return "\n\n".join(sections) if sections else None
 
 
 def _build_delegation_section() -> str:

@@ -733,24 +733,70 @@ def create_default_command_registry(
         return CommandResult(message="\n".join(lines))
 
     async def _skills_handler(args: str, context: CommandContext) -> CommandResult:
+        from openharness.config.settings import load_settings, save_settings
+
         skill_registry = load_skill_registry(
             context.cwd,
             extra_skill_dirs=context.extra_skill_dirs,
             extra_plugin_roots=context.extra_plugin_roots,
         )
-        if args:
-            skill = skill_registry.get(args)
-            if skill is None:
-                return CommandResult(message=f"Skill not found: {args}")
-            return CommandResult(message=skill.content)
-        skills = skill_registry.list_skills()
-        if not skills:
-            return CommandResult(message="No skills available.")
-        lines = ["Available skills:"]
-        for skill in skills:
-            source = f" [{skill.source}]"
-            lines.append(f"- {skill.name}{source}: {skill.description}")
-        return CommandResult(message="\n".join(lines))
+        tokens = args.split(maxsplit=1)
+        sub = tokens[0].lower() if tokens else ""
+        rest = tokens[1].strip() if len(tokens) > 1 else ""
+
+        # /skills preload <name|*>  — 스킬 내용을 시스템 프롬프트에 항상 주입
+        if sub == "preload":
+            if not rest:
+                return CommandResult(message="Usage: /skills preload <skill_name|*>")
+            settings = load_settings()
+            current: list[str] = list(getattr(settings, "preload_skills", None) or [])
+            if rest not in current:
+                current.append(rest)
+                settings.preload_skills = current
+                save_settings(settings)
+            return CommandResult(
+                message=f"✅ '{rest}' 스킬이 시스템 프롬프트에 항상 주입됩니다. (preload_skills: {current})",
+                refresh_runtime=True,
+            )
+
+        # /skills unload <name|*>  — preload 해제
+        if sub == "unload":
+            if not rest:
+                return CommandResult(message="Usage: /skills unload <skill_name|*>")
+            settings = load_settings()
+            current = list(getattr(settings, "preload_skills", None) or [])
+            if rest in current:
+                current.remove(rest)
+                settings.preload_skills = current
+                save_settings(settings)
+                return CommandResult(
+                    message=f"✅ '{rest}' preload 해제됨. (preload_skills: {current})",
+                    refresh_runtime=True,
+                )
+            return CommandResult(message=f"'{rest}'는 preload 목록에 없습니다.")
+
+        # /skills list (또는 인자 없음)
+        if not args or sub == "list":
+            settings = load_settings()
+            preloaded: list[str] = list(getattr(settings, "preload_skills", None) or [])
+            skills = skill_registry.list_skills()
+            if not skills:
+                return CommandResult(message="No skills available.")
+            lines = ["Available skills (* = preloaded into system prompt):"]
+            for skill in skills:
+                source = f" [{skill.source}]"
+                marker = " *" if (skill.name in preloaded or "*" in preloaded) else ""
+                lines.append(f"- {skill.name}{source}{marker}: {skill.description}")
+            if preloaded:
+                lines.append(f"\npreload_skills: {preloaded}")
+            lines.append("\nUsage: /skills preload <name|*>  |  /skills unload <name>")
+            return CommandResult(message="\n".join(lines))
+
+        # /skills <skill_name>  — 스킬 내용 보기
+        skill = skill_registry.get(args)
+        if skill is None:
+            return CommandResult(message=f"Skill not found: {args}\nTip: /skills list")
+        return CommandResult(message=skill.content)
 
     async def _config_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
