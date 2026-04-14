@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -26,6 +29,13 @@ class OutputRenderer:
         self._style_name = style_name
         self._spinner_status = None
         self._last_tool_input: dict | None = None
+        self._spinner_label: str = ""
+        self._spinner_start_time: float | None = None
+        self._spinner_stop_event: threading.Event | None = None
+        self._spinner_update_thread: threading.Thread | None = None
+        # 직전 턴까지의 누적 토큰 (스피너에 표시)
+        self._session_input_tokens: int = 0
+        self._session_output_tokens: int = 0
 
     def set_style(self, style_name: str) -> None:
         self._style_name = style_name
@@ -36,10 +46,14 @@ class OutputRenderer:
             return
         if self._style_name == "minimal":
             return
+        self._spinner_label = "Thinking"
+        self._spinner_start_time = time.monotonic()
+        self._spinner_stop_event = threading.Event()
         self._spinner_status = self.console.status(
-            "[cyan]Thinking...[/cyan]", spinner="dots"
+            self._make_spinner_text(), spinner="dots"
         )
         self._spinner_status.start()
+        self._start_spinner_update_thread()
 
     def start_assistant_turn(self) -> None:
         self._stop_spinner()  # Stop the thinking spinner when output starts
@@ -121,6 +135,10 @@ class OutputRenderer:
         permission_mode: str = "default",
     ) -> None:
         """Print a compact status line after each turn."""
+        # 다음 스피너에서 누적 토큰을 표시할 수 있도록 저장
+        self._session_input_tokens = input_tokens
+        self._session_output_tokens = output_tokens
+
         parts = [f"[cyan]model: {model}[/cyan]"]
         if input_tokens > 0 or output_tokens > 0:
             down = "\u2193"
@@ -134,16 +152,57 @@ class OutputRenderer:
     def clear(self) -> None:
         self.console.clear()
 
+    def _make_spinner_text(self) -> str:
+        """스피너에 표시할 텍스트: 레이블 + 경과 시간 + 누적 토큰."""
+        parts = [f"[cyan]{self._spinner_label}...[/cyan]"]
+        if self._spinner_start_time is not None:
+            elapsed = time.monotonic() - self._spinner_start_time
+            parts.append(f"[dim]{_fmt_elapsed(elapsed)}[/dim]")
+        if self._session_input_tokens > 0 or self._session_output_tokens > 0:
+            down, up = "\u2193", "\u2191"
+            parts.append(
+                f"[dim]{_fmt_num(self._session_input_tokens)}{down} "
+                f"{_fmt_num(self._session_output_tokens)}{up}[/dim]"
+            )
+        return "  ".join(parts)
+
+    def _start_spinner_update_thread(self) -> None:
+        """매초 스피너 텍스트를 갱신하는 데몬 스레드."""
+        stop_event = self._spinner_stop_event
+
+        def _tick() -> None:
+            while stop_event is not None and not stop_event.wait(1.0):
+                if self._spinner_status is not None:
+                    try:
+                        self._spinner_status.update(self._make_spinner_text())
+                    except Exception:
+                        break
+
+        t = threading.Thread(target=_tick, daemon=True, name="spinner-tick")
+        t.start()
+        self._spinner_update_thread = t
+
     def _start_spinner(self, tool_name: str) -> None:
         if self._style_name == "minimal":
             return
-        self._spinner_status = self.console.status(f"Running {tool_name}...", spinner="dots")
+        self._spinner_label = f"Running {tool_name}"
+        self._spinner_start_time = time.monotonic()
+        self._spinner_stop_event = threading.Event()
+        self._spinner_status = self.console.status(
+            self._make_spinner_text(), spinner="dots"
+        )
         self._spinner_status.start()
+        self._start_spinner_update_thread()
 
     def _stop_spinner(self) -> None:
+        if self._spinner_stop_event is not None:
+            self._spinner_stop_event.set()
+            self._spinner_stop_event = None
         if self._spinner_status is not None:
             self._spinner_status.stop()
             self._spinner_status = None
+        self._spinner_start_time = None
+        self._spinner_update_thread = None
 
     def _render_tool_output(self, tool_name: str, tool_input: dict | None, output: str) -> None:
         lower = tool_name.lower()
@@ -221,6 +280,14 @@ def _ext_to_lexer(ext: str) -> str | None:
         "txt": None,
     }
     return mapping.get(ext.lower())
+
+
+def _fmt_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    m = int(seconds // 60)
+    s = int(seconds % 60)
+    return f"{m}m{s:02d}s"
 
 
 def _fmt_num(n: int) -> str:

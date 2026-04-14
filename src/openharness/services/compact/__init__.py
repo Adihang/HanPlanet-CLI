@@ -56,6 +56,12 @@ TOKEN_ESTIMATION_PADDING = 4 / 3
 # Default context windows per model family
 _DEFAULT_CONTEXT_WINDOW = 200_000
 
+# Ollama 로컬 모델의 실제 컨텍스트 크기.
+# OLLAMA_NUM_CTX 환경변수로 Hanplanet 프록시에 설정된 값과 일치시켜 auto-compact 임계값을 올바르게 계산한다.
+# 0이면 비활성화 (기본 fallback 사용).
+import os as _os
+_OLLAMA_NUM_CTX = int(_os.environ.get("OLLAMA_NUM_CTX", 0))
+
 
 # ---------------------------------------------------------------------------
 # Token estimation
@@ -255,22 +261,29 @@ class AutoCompactState:
 def get_context_window(model: str) -> int:
     """Return the context window size for a model (conservative defaults)."""
     m = model.lower()
-    if "opus" in m:
+    if "opus" in m or "sonnet" in m or "haiku" in m:
         return 200_000
-    if "sonnet" in m:
-        return 200_000
-    if "haiku" in m:
-        return 200_000
-    # Kimi / other providers — be conservative
+    # Ollama 로컬 모델 — OLLAMA_NUM_CTX 환경변수와 일치시켜 auto-compact가 올바른 시점에 동작하도록 함
+    if _OLLAMA_NUM_CTX and any(x in m for x in ("gemma", "llama", "qwen", "mistral", "phi", "deepseek", "falcon", "solar")):
+        return _OLLAMA_NUM_CTX
+    # Other providers — be conservative
     return _DEFAULT_CONTEXT_WINDOW
 
 
 def get_autocompact_threshold(model: str) -> int:
-    """Calculate the token count at which auto-compact fires."""
+    """Calculate the token count at which auto-compact fires.
+
+    For large context models (200k) the fixed 20k + 13k constants work well.
+    For smaller Ollama models we scale reserved/buffer proportionally so the
+    threshold stays sensibly below the actual context limit.
+    """
     context_window = get_context_window(model)
-    reserved = min(MAX_OUTPUT_TOKENS_FOR_SUMMARY, 20_000)
-    effective = context_window - reserved
-    return effective - AUTOCOMPACT_BUFFER_TOKENS
+    # Scale constants to fit within the actual context window
+    reserved = min(MAX_OUTPUT_TOKENS_FOR_SUMMARY, context_window // 4)
+    buffer = min(AUTOCOMPACT_BUFFER_TOKENS, context_window // 8)
+    threshold = context_window - reserved - buffer
+    # Never fire below 50 % of context (avoids thrashing on tiny windows)
+    return max(threshold, context_window // 2)
 
 
 def should_autocompact(
