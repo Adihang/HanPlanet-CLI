@@ -404,8 +404,8 @@ class ReactBackendHost:
         if command == "provider" and not selected.startswith("__"):
             from openharness.config.settings import builtin_provider_profile_names
             _builtin_names = builtin_provider_profile_names()
-            _always_special = {"hanplanet", "ollama"}
-            if selected not in _builtin_names and selected not in _always_special:
+            # ollama는 기본 카탈로그에 없지만 special 처리
+            if selected not in _builtin_names and selected != "ollama":
                 await self._handle_select_command(f"custom-provider-{selected}")
                 return True
 

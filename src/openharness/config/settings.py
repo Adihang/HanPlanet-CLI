@@ -181,6 +181,15 @@ def normalize_anthropic_model_name(model: str) -> str:
 def default_provider_profiles() -> dict[str, ProviderProfile]:
     """Return the built-in provider workflow catalog."""
     return {
+        "hanplanet": ProviderProfile(
+            label="Hanplanet",
+            provider="openai",
+            api_format="openai",
+            auth_source="openai_api_key",
+            default_model="",
+            base_url="https://hanplanet.com/ai/v1",
+            credential_slot="hanplanet",
+        ),
         "claude-api": ProviderProfile(
             label="Anthropic-Compatible API",
             provider="anthropic",
