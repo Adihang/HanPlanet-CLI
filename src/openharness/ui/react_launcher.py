@@ -131,15 +131,44 @@ async def launch_react_tui(
     npm = _resolve_npm()
 
     if not (frontend_dir / "node_modules").exists():
+        import sys
+        from rich.console import Console
+        from rich.progress import Progress, SpinnerColumn, TextColumn
+
+        _con = Console(file=sys.stderr)
+        _con.print()
+        _con.print("[bold cyan]📦  React TUI 의존성 설치 중...[/bold cyan]")
+        _con.print("[dim]  (최초 실행 시 1회. 잠시 기다려주세요)[/dim]")
+
         install = await asyncio.create_subprocess_exec(
             npm,
             "install",
             "--no-fund",
             "--no-audit",
             cwd=str(frontend_dir),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
         )
-        if await install.wait() != 0:
-            raise RuntimeError("Failed to install React terminal frontend dependencies")
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[cyan]npm install[/cyan]"),
+            console=_con,
+            transient=True,
+        ) as _progress:
+            _progress.add_task("installing", total=None)
+            ret = await install.wait()
+
+        if ret != 0:
+            _err = b""
+            if install.stderr:
+                _err = await install.stderr.read()
+            raise RuntimeError(
+                f"npm install 실패 (exit {ret}):\n{_err.decode(errors='replace')}"
+            )
+
+        _con.print("[bold green]✅  설치 완료![/bold green]")
+        _con.print()
 
     env = os.environ.copy()
     env["OPENHARNESS_FRONTEND_CONFIG"] = json.dumps(
