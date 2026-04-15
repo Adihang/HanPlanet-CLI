@@ -48,7 +48,7 @@ pipx install -e .
 > # 경로 예시 (Python 버전에 맞게 수정)
 > echo "/path/to/HanHarness
 > /path/to/HanHarness/src" \
->   > ~/.local/pipx/venvs/openharness-ai/lib/python3.13/site-packages/_openharness_ai.pth
+>   > ~/.local/pipx/venvs/hanharness/lib/python3.13/site-packages/_hanharness.pth
 > ```
 
 ### 실행
@@ -91,14 +91,30 @@ hanplanet -p "질문"       # 비대화형 모드
 
 ---
 
-### Provider 목록 커스텀
+### Provider 목록 커스텀 및 커스텀 API 추가
 
 **파일:** `src/openharness/ui/backend_host.py`
 
-- `/provider` 목록에서 `ollama`, `hanplanet` 외 프로바이더 숨김 (삭제 아님)
-- Hanplanet 설명문: `"Hanplanet / Hanplanet oauth, key"`
+- `/provider` 목록에 등록된 모든 프로바이더 표시 (활성→설정됨→커스텀→미설정 순 정렬)
+- `openrouter` 등 불필요한 내장 프로바이더 숨김 처리 (`_HIDDEN_PROFILES`)
 - Hanplanet 선택 시 항상 인증 방법 선택 화면 표시 (계정 전환 지원)
 - 프로바이더 선택 완료 후 자동으로 모델 선택 화면 이동
+- `➕ 커스텀 API 추가` 옵션으로 OpenAI-compatible 엔드포인트 등록 지원
+
+**커스텀 API 추가 흐름:**
+1. `/provider` → `➕ 커스텀 API 추가` 선택
+2. 인증 방식 체크박스 선택 (복수 선택 가능): `🌐 OAuth` / `🔑 API 키`
+3. Base URL → (OAuth이면) OAuth 로그인 URL + 폴링 URL → (API 키이면) API 키 입력
+4. 기본 모델명, 프로파일 이름, 표시 이름 입력
+5. 저장 후 즉시 해당 프로바이더로 전환
+
+**커스텀 프로바이더 관리:**
+- `/provider` 에서 등록된 커스텀 프로바이더 선택 시 관리 메뉴 표시
+- 등록 시 선택한 인증 방식에 따라 메뉴 구성:
+  - `🌐 OAuth 재인증` (OAuth로 등록한 경우)
+  - `🔑 API 키 변경` (API 키로 등록한 경우)
+  - `🗑 프로바이더 삭제`
+- 삭제 시 크리덴셜 포함 완전 제거, 활성 프로파일이면 `claude-api`로 자동 전환
 
 ---
 
@@ -501,7 +517,7 @@ Python 백엔드 내부 흐름:
 | `tool_started` | B→F | 도구 실행 시작 |
 | `tool_completed` | B→F | 도구 실행 완료 |
 | `line_complete` | B→F | 턴 종료, 스피너 해제 |
-| `select_request` | B→F | 선택 모달 요청 |
+| `select_request` | B→F | 선택 모달 요청 (`kind: "select"` 단일 / `kind: "multiselect"` 체크박스) |
 | `modal_request` | B→F | 권한/질문 모달 요청 |
 | `submit_line` | F→B | 사용자 입력 전송 |
 | `apply_select_command` | F→B | 선택 모달 결과 전송 |
@@ -610,7 +626,8 @@ registry.register(SlashCommand("my-cmd", "설명", _my_handler))
 | `PromptInput.tsx` | 사용자 입력창 + 스피너 |
 | `Spinner.tsx` | `ink-spinner` 기반 로딩 인디케이터, 커스텀 VERBS |
 | `CommandPicker.tsx` | `/` 입력 시 나타나는 커맨드 선택 드롭다운 |
-| `SelectModal.tsx` | ↑↓ 선택 모달 (모델, 프로바이더, 세션 등) |
+| `SelectModal.tsx` | ↑↓ 단일 선택 모달 (모델, 프로바이더, 세션 등) |
+| `MultiSelectModal.tsx` | 체크박스 복수 선택 모달 (프로바이더 등록 시 인증 방식 선택) |
 | `ModalHost.tsx` | 권한 확인, 질문 모달 |
 | `StatusBar.tsx` | 하단 상태바 (모델, 모드, 토큰, 태스크 수) |
 | `TodoPanel.tsx` | 투두 목록 표시, Ctrl+T 토글 |

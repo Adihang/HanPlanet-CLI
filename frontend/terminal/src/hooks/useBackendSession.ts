@@ -31,7 +31,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	const [mcpServers, setMcpServers] = useState<McpServerSnapshot[]>([]);
 	const [bridgeSessions, setBridgeSessions] = useState<BridgeSessionSnapshot[]>([]);
 	const [modal, setModal] = useState<Record<string, unknown> | null>(null);
-	const [selectRequest, setSelectRequest] = useState<{title: string; command: string; options: SelectOptionPayload[]} | null>(null);
+	const [selectRequest, setSelectRequest] = useState<{title: string; command: string; kind: string; options: SelectOptionPayload[]} | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [busyLabel, setBusyLabel] = useState<string | undefined>(undefined);
 	const [ready, setReady] = useState(false);
@@ -383,6 +383,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			setSelectRequest({
 				title: String(m.title ?? 'Select'),
 				command: String(m.command ?? ''),
+				kind: String(m.kind ?? 'select'),
 				options: event.select_options ?? [],
 			});
 			return;

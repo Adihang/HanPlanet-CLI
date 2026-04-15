@@ -7,6 +7,7 @@ import {ConversationView} from './components/ConversationView.js';
 import {ModalHost} from './components/ModalHost.js';
 import {PromptInput} from './components/PromptInput.js';
 import {SelectModal, type SelectOption} from './components/SelectModal.js';
+import {MultiSelectModal, type MultiSelectOption} from './components/MultiSelectModal.js';
 import {StatusBar} from './components/StatusBar.js';
 import {SwarmPanel} from './components/SwarmPanel.js';
 import {TodoPanel} from './components/TodoPanel.js';
@@ -57,6 +58,12 @@ type SelectModalState = {
 	onSelect: (value: string) => void;
 } | null;
 
+type MultiSelectModalState = {
+	title: string;
+	options: MultiSelectOption[];
+	onConfirm: (values: string[]) => void;
+} | null;
+
 export function App({config}: {config: FrontendConfig}): React.JSX.Element {
 	const initialTheme = String((config as Record<string, unknown>).theme ?? 'default');
 	return (
@@ -78,6 +85,9 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	const [pickerIndex, setPickerIndex] = useState(0);
 	const [selectModal, setSelectModal] = useState<SelectModalState>(null);
 	const [selectIndex, setSelectIndex] = useState(0);
+	const [multiSelectModal, setMultiSelectModal] = useState<MultiSelectModalState>(null);
+	const [multiSelectIndex, setMultiSelectIndex] = useState(0);
+	const [multiSelectChecked, setMultiSelectChecked] = useState<Set<string>>(new Set());
 	const session = useBackendSession(config, () => exit());
 	const deferredTranscript = useDeferredValue(session.transcript);
 	const deferredAssistantBuffer = useDeferredValue(session.assistantBuffer);
@@ -117,7 +127,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		return session.commands.filter((cmd) => cmd.name.startsWith(value)).slice(0, 12);
 	}, [session.commands, input]);
 
-	const showPicker = commandHints.length > 0 && !session.busy && !session.modal && !selectModal;
+	const showPicker = commandHints.length > 0 && !session.busy && !session.modal && !selectModal && !multiSelectModal;
 	const outputStyle = String(session.status.output_style ?? 'default');
 
 	useEffect(() => {
@@ -134,17 +144,32 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			session.setSelectRequest(null);
 			return;
 		}
-		const initialIndex = req.options.findIndex((option) => option.active);
-		setSelectIndex(initialIndex >= 0 ? initialIndex : 0);
-		setSelectModal({
-			title: req.title,
-			options: req.options.map((o) => ({value: o.value, label: o.label, description: o.description, active: o.active})),
-			onSelect: (value) => {
-				session.sendRequest({type: 'apply_select_command', command: req.command, value});
-				session.setBusy(true);
-				setSelectModal(null);
-			},
-		});
+
+		if (req.kind === 'multiselect') {
+			setMultiSelectIndex(0);
+			setMultiSelectChecked(new Set());
+			setMultiSelectModal({
+				title: req.title,
+				options: req.options.map((o) => ({value: o.value, label: o.label, description: o.description})),
+				onConfirm: (values) => {
+					session.sendRequest({type: 'apply_select_command', command: req.command, value: values.join(',')});
+					session.setBusy(true);
+					setMultiSelectModal(null);
+				},
+			});
+		} else {
+			const initialIndex = req.options.findIndex((option) => option.active);
+			setSelectIndex(initialIndex >= 0 ? initialIndex : 0);
+			setSelectModal({
+				title: req.title,
+				options: req.options.map((o) => ({value: o.value, label: o.label, description: o.description, active: o.active})),
+				onSelect: (value) => {
+					session.sendRequest({type: 'apply_select_command', command: req.command, value});
+					session.setBusy(true);
+					setSelectModal(null);
+				},
+			});
+		}
 		session.setSelectRequest(null);
 	}, [session.selectRequest]);
 
@@ -227,6 +252,44 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				if (selected) {
 					selectModal.onSelect(selected.value);
 				}
+				return;
+			}
+			return;
+		}
+
+		// --- Multi-select modal (checkbox picker) ---
+		if (multiSelectModal) {
+			if (key.upArrow) {
+				setMultiSelectIndex((i) => Math.max(0, i - 1));
+				return;
+			}
+			if (key.downArrow) {
+				setMultiSelectIndex((i) => Math.min(multiSelectModal.options.length - 1, i + 1));
+				return;
+			}
+			if (chunk === ' ') {
+				const val = multiSelectModal.options[multiSelectIndex]?.value;
+				if (val) {
+					setMultiSelectChecked((prev) => {
+						const next = new Set(prev);
+						if (next.has(val)) {
+							next.delete(val);
+						} else {
+							next.add(val);
+						}
+						return next;
+					});
+				}
+				return;
+			}
+			if (key.return) {
+				if (multiSelectChecked.size > 0) {
+					multiSelectModal.onConfirm([...multiSelectChecked]);
+				}
+				return;
+			}
+			if (key.escape) {
+				setMultiSelectModal(null);
 				return;
 			}
 			return;
@@ -391,7 +454,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		if (scriptIndex >= scriptedSteps.length) {
 			return;
 		}
-		if (session.busy || session.modal || selectModal) {
+		if (session.busy || session.modal || selectModal || multiSelectModal) {
 			return;
 		}
 		const step = scriptedSteps[scriptIndex];
@@ -433,6 +496,16 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				/>
 			) : null}
 
+			{/* Frontend multi-select modal (checkbox picker) */}
+			{multiSelectModal ? (
+				<MultiSelectModal
+					title={multiSelectModal.title}
+					options={multiSelectModal.options}
+					cursorIndex={multiSelectIndex}
+					checkedValues={multiSelectChecked}
+				/>
+			) : null}
+
 			{/* OAuth countdown */}
 			{session.oauthPending ? (
 				<OAuthCountdown message={session.oauthPending.message} endsAt={session.oauthPending.endsAt} />
@@ -463,7 +536,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				<Box>
 					<Text color={theme.colors.warning}>Connecting to backend...</Text>
 				</Box>
-			) : session.modal || selectModal ? null : (
+			) : session.modal || selectModal || multiSelectModal ? null : (
 				<PromptInput
 					busy={session.busy}
 					input={input}
@@ -476,7 +549,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			)}
 
 			{/* Keyboard hints (only after backend is ready) */}
-			{session.ready && !session.modal && !selectModal ? (
+			{session.ready && !session.modal && !selectModal && !multiSelectModal ? (
 				<Box>
 					<Text dimColor>
 						<Text color={theme.colors.primary}>enter</Text> send{'  '}

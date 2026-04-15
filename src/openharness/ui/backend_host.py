@@ -367,9 +367,57 @@ class ReactBackendHost:
                 return True
             # "list" falls through to _build_select_command_line
 
-        # /provider __custom_add__ → 커스텀 API 추가 플로우
+        # /provider __custom_add__ → 인증 방식 멀티선택 후 커스텀 API 추가 플로우
         if command == "provider" and selected == "__custom_add__":
-            await self._custom_provider_add_flow()
+            options = [
+                {
+                    "value": "oauth",
+                    "label": "🌐  OAuth 설정",
+                    "description": "브라우저 로그인으로 토큰 자동 발급",
+                },
+                {
+                    "value": "apikey",
+                    "label": "🔑  API 키 직접 입력",
+                    "description": "API 키를 직접 입력해서 등록",
+                },
+            ]
+            await self._emit(BackendEvent(
+                type="select_request",
+                modal={"kind": "multiselect", "title": "커스텀 API 추가 — 인증 방식 선택 (복수 가능)", "command": "provider-add-auth"},
+                select_options=options,
+            ))
+            await self._emit(BackendEvent(type="line_complete"))
+            return True
+
+        # provider-add-auth: 멀티선택 결과 ("oauth", "apikey", "oauth,apikey" 등)
+        if command == "provider-add-auth":
+            auth_methods = {m.strip() for m in selected.split(",") if m.strip()}
+            await self._custom_provider_add_flow(auth_methods=auth_methods)
+            return True
+
+        # /provider 사용자 추가 커스텀 프로바이더 → 관리 메뉴 (builtin/special/__ 가 아닌 경우)
+        if command == "provider" and not selected.startswith("__"):
+            from openharness.config.settings import builtin_provider_profile_names
+            _builtin_names = builtin_provider_profile_names()
+            _always_special = {"hanplanet", "ollama"}
+            if selected not in _builtin_names and selected not in _always_special:
+                await self._handle_select_command(f"custom-provider-{selected}")
+                return True
+
+        # custom-provider-manage: action::profile_name
+        if command == "custom-provider-manage":
+            parts = selected.split("::", 1)
+            if len(parts) == 2:
+                action, profile_name = parts
+                if action == "oauth":
+                    await self._custom_provider_oauth_reauth_flow(profile_name)
+                elif action == "apikey":
+                    await self._custom_provider_apikey_change_flow(profile_name)
+                elif action == "delete":
+                    await self._custom_provider_delete(profile_name)
+            else:
+                await self._emit(BackendEvent(type="error", message=f"잘못된 관리 커맨드: {selected}"))
+                await self._emit(BackendEvent(type="line_complete"))
             return True
 
         # /provider hanplanet → always show auth method picker (allows re-auth / account switch)
@@ -546,8 +594,11 @@ class ReactBackendHost:
                 "openai-compatible": "🟢", "codex": "🟢", "copilot": "⚙️",
                 "moonshot": "🌙", "gemini": "🔷",
             }
+            _HIDDEN_PROFILES = {"openrouter"}
             options = []
             for name, info in sorted(statuses.items(), key=_sort_key):
+                if name in _HIDDEN_PROFILES:
+                    continue
                 emoji = PROVIDER_EMOJI.get(name, "🔌")
                 if info["configured"]:
                     status_tag = "✓ 설정됨"
@@ -577,6 +628,62 @@ class ReactBackendHost:
                     select_options=options,
                 )
             )
+            return
+
+        if command.startswith("custom-provider-"):
+            profile_name = command[len("custom-provider-"):]
+            # 등록 시 선택했던 인증 방식 목록 로드
+            from openharness.auth.storage import load_credential
+            stored_methods_raw = ""
+            try:
+                stored_methods_raw = load_credential(profile_name, "auth_methods") or ""
+            except Exception:
+                pass
+            stored_methods = {m.strip() for m in stored_methods_raw.split(",") if m.strip()}
+            # 하위 호환: auth_methods 없으면 oauth_auth_url 존재 여부로 판단
+            if not stored_methods:
+                try:
+                    if load_credential(profile_name, "oauth_auth_url"):
+                        stored_methods.add("oauth")
+                except Exception:
+                    pass
+                try:
+                    if load_credential(profile_name, "api_key"):
+                        stored_methods.add("apikey")
+                except Exception:
+                    pass
+                if not stored_methods:
+                    stored_methods.add("apikey")  # 기본 fallback
+            profile_label = profile_name
+            if profile_name in (settings.provider_profiles or {}):
+                profile_label = settings.provider_profiles[profile_name].label or profile_name
+            options = []
+            if "oauth" in stored_methods:
+                options.append({
+                    "value": f"oauth::{profile_name}",
+                    "label": "🌐  OAuth 재인증",
+                    "description": "브라우저로 다시 인증합니다",
+                    "active": False,
+                })
+            if "apikey" in stored_methods:
+                options.append({
+                    "value": f"apikey::{profile_name}",
+                    "label": "🔑  API 키 변경",
+                    "description": "새 API 키로 교체합니다",
+                    "active": False,
+                })
+            options.append({
+                "value": f"delete::{profile_name}",
+                "label": "🗑  프로바이더 삭제",
+                "description": f"'{profile_label}' 프로파일을 완전히 삭제합니다",
+                "active": False,
+            })
+            await self._emit(BackendEvent(
+                type="select_request",
+                modal={"kind": "select", "title": f"⚙️  {profile_label} 관리", "command": "custom-provider-manage"},
+                select_options=options,
+            ))
+            await self._emit(BackendEvent(type="line_complete"))
             return
 
         if command == "permissions":
@@ -1302,21 +1409,26 @@ class ReactBackendHost:
 
     # ── 커스텀 프로바이더 추가 ─────────────────────────────────────────────────
 
-    async def _custom_provider_add_flow(self) -> None:
+    async def _custom_provider_add_flow(self, auth_methods: set[str] | None = None) -> None:
         """커스텀 OpenAI-compatible API 프로바이더를 대화형으로 추가한다."""
+        if auth_methods is None:
+            auth_methods = {"apikey"}
         try:
-            await self._custom_provider_add_flow_inner()
+            await self._custom_provider_add_flow_inner(auth_methods=auth_methods)
         except Exception as exc:
             await self._emit(BackendEvent(type="error", message=f"커스텀 프로바이더 추가 실패: {exc}"))
             await self._emit(BackendEvent(type="line_complete"))
 
-    async def _custom_provider_add_flow_inner(self) -> None:
+    async def _custom_provider_add_flow_inner(self, auth_methods: set[str]) -> None:
         import re
         from urllib.parse import urlsplit
 
         from openharness.auth.manager import AuthManager
         from openharness.api.provider import detect_provider, auth_status
         from openharness.config.settings import ProviderProfile, load_settings
+
+        use_oauth = "oauth" in auth_methods
+        use_apikey = "apikey" in auth_methods
 
         # ① Base URL
         base_url_raw = await self._ask_question(
@@ -1327,13 +1439,31 @@ class ReactBackendHost:
             return
         base_url = base_url_raw.strip().rstrip("/")
 
-        # ② API Key (없으면 빈 값 허용 — Ollama 등)
-        api_key_raw = await self._ask_question(
-            "API 키를 입력하세요 (키가 없으면 Enter로 건너뜀):"
-        )
-        api_key = (api_key_raw or "").strip()
+        # ② OAuth 정보 수집
+        oauth_auth_url = ""
+        oauth_token_url = ""
+        if use_oauth:
+            oauth_auth_url_raw = await self._ask_question(
+                "OAuth 로그인 URL을 입력하세요\n예) https://example.com/oauth/authorize"
+            )
+            oauth_auth_url = (oauth_auth_url_raw or "").strip()
+            if not oauth_auth_url:
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+            oauth_token_url_raw = await self._ask_question(
+                "토큰 폴링 URL을 입력하세요 (없으면 Enter로 건너뜀):\n예) https://example.com/api/oauth/token"
+            )
+            oauth_token_url = (oauth_token_url_raw or "").strip()
 
-        # ③ 기본 모델명
+        # ③ API 키 수집
+        api_key = ""
+        if use_apikey:
+            api_key_raw = await self._ask_question(
+                "API 키를 입력하세요 (없으면 Enter로 건너뜀):"
+            )
+            api_key = (api_key_raw or "").strip()
+
+        # ④ 기본 모델명
         model_raw = await self._ask_question(
             "기본 모델명을 입력하세요\n예) gpt-4o  |  llama3.3:70b  |  gemini-2.5-flash"
         )
@@ -1342,7 +1472,7 @@ class ReactBackendHost:
             return
         model_name = model_raw.strip()
 
-        # ④ 프로파일 이름 (자동 제안 → 사용자 확인)
+        # ⑤ 프로파일 이름 (자동 제안 → 사용자 확인)
         parsed = urlsplit(base_url)
         auto_name = re.sub(r"[^a-z0-9\-]", "-", parsed.netloc.split(":")[0].lower()).strip("-") or "custom-api"
         name_raw = await self._ask_question(
@@ -1350,7 +1480,7 @@ class ReactBackendHost:
         )
         profile_name = re.sub(r"[^a-zA-Z0-9\-_]", "-", (name_raw or "").strip()).strip("-") or auto_name
 
-        # ⑤ 표시 레이블
+        # ⑥ 표시 레이블
         label_raw = await self._ask_question(
             f"표시 이름을 입력하세요 (비워두면 '{profile_name}' 사용):"
         )
@@ -1369,14 +1499,29 @@ class ReactBackendHost:
             credential_slot=profile_name,
         )
         manager.upsert_profile(profile_name, profile)
+        # 선택한 인증 방식 목록 저장 (관리 메뉴에서 재사용)
+        manager.store_profile_credential(profile_name, "auth_methods", ",".join(sorted(auth_methods)))
         if api_key:
             manager.store_profile_credential(profile_name, "api_key", api_key)
+        if oauth_auth_url:
+            manager.store_profile_credential(profile_name, "oauth_auth_url", oauth_auth_url)
+        if oauth_token_url:
+            manager.store_profile_credential(profile_name, "oauth_token_url", oauth_token_url)
+
         manager.use_profile(profile_name)
 
-        # 런타임 상태 갱신
+        # OAuth가 포함된 경우 즉시 브라우저 인증 플로우 실행
+        if use_oauth:
+            await self._emit(BackendEvent(
+                type="info",
+                message=f"✅ 커스텀 프로바이더 '{profile_name}' 등록 완료! OAuth 인증을 시작합니다.",
+            ))
+            await self._custom_provider_oauth_reauth_flow(profile_name, model_name=model_name, base_url=base_url)
+            return
+
+        # API 키 전용인 경우 런타임 상태 갱신 후 완료
         updated_settings = load_settings()
         assert self._bundle is not None
-        _, active_profile = updated_settings.resolve_profile()
         self._bundle.app_state.set(
             model=model_name,
             provider=detect_provider(updated_settings).name,
@@ -1397,6 +1542,197 @@ class ReactBackendHost:
             ),
         ))
         await self._emit(BackendEvent(type="line_complete"))
+
+    # ── 커스텀 프로바이더 관리 (재인증 / 키 변경 / 삭제) ─────────────────────
+
+    async def _custom_provider_oauth_reauth_flow(
+        self,
+        profile_name: str,
+        model_name: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        """저장된 OAuth URL로 커스텀 프로바이더를 브라우저 인증한다."""
+        try:
+            await self._custom_provider_oauth_reauth_flow_inner(profile_name, model_name, base_url)
+        except Exception as exc:
+            await self._emit(BackendEvent(type="error", message=f"OAuth 인증 실패: {exc}"))
+            await self._emit(BackendEvent(type="line_complete"))
+
+    async def _custom_provider_oauth_reauth_flow_inner(
+        self,
+        profile_name: str,
+        model_name: str | None = None,
+        base_url: str | None = None,
+    ) -> None:
+        import asyncio
+        import platform
+        import subprocess
+
+        from openharness.auth.storage import load_credential
+        from openharness.auth.manager import AuthManager
+        from openharness.config.settings import load_settings
+        from openharness.api.provider import detect_provider, auth_status
+
+        oauth_auth_url = load_credential(profile_name, "oauth_auth_url") or ""
+        oauth_token_url = load_credential(profile_name, "oauth_token_url") or ""
+
+        if not oauth_auth_url:
+            await self._emit(BackendEvent(type="error", message=f"'{profile_name}'에 OAuth URL이 저장되어 있지 않습니다."))
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+
+        await self._emit(BackendEvent(
+            type="info",
+            message=f"OAuth 로그인 URL: {oauth_auth_url}",
+        ))
+        await self._emit(BackendEvent(
+            type="oauth_pending",
+            message="브라우저에서 위 URL을 열어 인증을 완료해 주세요…",
+            timeout_seconds=300,
+        ))
+
+        # 브라우저 열기 시도
+        try:
+            plat = platform.system()
+            if plat == "Darwin":
+                subprocess.Popen(["open", oauth_auth_url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif plat == "Windows":
+                subprocess.Popen(["start", "", oauth_auth_url], shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                subprocess.Popen(["xdg-open", oauth_auth_url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+        access_token: str | None = None
+
+        if oauth_token_url:
+            # 폴링으로 토큰 획득
+            try:
+                import httpx
+                deadline = asyncio.get_running_loop().time() + 300
+                async with httpx.AsyncClient(timeout=10) as client:
+                    while asyncio.get_running_loop().time() < deadline:
+                        await asyncio.sleep(2)
+                        try:
+                            resp = await client.get(oauth_token_url)
+                        except Exception:
+                            continue
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            if data.get("status") == "cancelled":
+                                await self._emit(BackendEvent(type="info", message="인증이 취소됐습니다."))
+                                await self._emit(BackendEvent(type="line_complete"))
+                                return
+                            access_token = data.get("access_token")
+                            if access_token:
+                                break
+            except Exception as exc:
+                await self._emit(BackendEvent(type="error", message=f"토큰 폴링 실패: {exc}"))
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+            if not access_token:
+                await self._emit(BackendEvent(type="error", message="인증 시간 초과 (300초). 다시 시도해주세요."))
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+        else:
+            # 폴링 URL 없음 → 사용자가 직접 토큰을 붙여넣기
+            token_raw = await self._ask_question(
+                "인증 완료 후 발급된 API 토큰을 여기에 붙여넣으세요:"
+            )
+            access_token = (token_raw or "").strip()
+            if not access_token:
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+
+        settings = load_settings()
+        manager = AuthManager(settings)
+        manager.store_profile_credential(profile_name, "api_key", access_token)
+
+        # 런타임 상태 갱신
+        updated_settings = load_settings()
+        assert self._bundle is not None
+        _model = model_name or updated_settings.provider_profiles.get(profile_name, None)
+        if _model is None:
+            _model = ""
+        elif hasattr(_model, "default_model"):
+            _model = _model.default_model
+        _base_url = base_url or ""
+        if not _base_url:
+            _prof = updated_settings.provider_profiles.get(profile_name)
+            if _prof:
+                _base_url = _prof.base_url or ""
+        self._bundle.app_state.set(
+            provider=detect_provider(updated_settings).name,
+            auth_status=auth_status(updated_settings),
+            base_url=_base_url,
+        )
+
+        await self._emit(BackendEvent(type="info", message=f"✅ '{profile_name}' OAuth 인증 완료!"))
+        await self._emit(BackendEvent(type="line_complete"))
+
+    async def _custom_provider_apikey_change_flow(self, profile_name: str) -> None:
+        """커스텀 프로바이더의 API 키를 변경한다."""
+        try:
+            new_key_raw = await self._ask_question(
+                f"'{profile_name}'의 새 API 키를 입력하세요:"
+            )
+            new_key = (new_key_raw or "").strip()
+            if not new_key:
+                await self._emit(BackendEvent(type="info", message="취소됐습니다."))
+                await self._emit(BackendEvent(type="line_complete"))
+                return
+
+            from openharness.auth.manager import AuthManager
+            from openharness.config.settings import load_settings
+            from openharness.api.provider import auth_status
+
+            settings = load_settings()
+            manager = AuthManager(settings)
+            manager.store_profile_credential(profile_name, "api_key", new_key)
+
+            updated_settings = load_settings()
+            assert self._bundle is not None
+            self._bundle.app_state.set(auth_status=auth_status(updated_settings))
+
+            await self._emit(BackendEvent(type="info", message=f"✅ '{profile_name}' API 키가 변경됐습니다."))
+            await self._emit(BackendEvent(type="line_complete"))
+        except Exception as exc:
+            await self._emit(BackendEvent(type="error", message=f"API 키 변경 실패: {exc}"))
+            await self._emit(BackendEvent(type="line_complete"))
+
+    async def _custom_provider_delete(self, profile_name: str) -> None:
+        """커스텀 프로바이더 프로파일과 크리덴셜을 삭제한다."""
+        try:
+            from openharness.auth.manager import AuthManager
+            from openharness.config.settings import load_settings
+            from openharness.api.provider import detect_provider, auth_status
+
+            settings = load_settings()
+            _, active_prof = settings.resolve_profile()
+            manager = AuthManager(settings)
+
+            # 현재 활성 프로파일이면 기본으로 전환 후 삭제
+            if active_prof == profile_name:
+                try:
+                    manager.use_profile("claude-api")
+                except Exception:
+                    pass
+
+            manager.clear_profile_credential(profile_name)
+            manager.remove_profile(profile_name)
+
+            updated_settings = load_settings()
+            assert self._bundle is not None
+            self._bundle.app_state.set(
+                provider=detect_provider(updated_settings).name,
+                auth_status=auth_status(updated_settings),
+            )
+
+            await self._emit(BackendEvent(type="info", message=f"✅ '{profile_name}' 프로바이더가 삭제됐습니다."))
+            await self._emit(BackendEvent(type="line_complete"))
+        except Exception as exc:
+            await self._emit(BackendEvent(type="error", message=f"프로바이더 삭제 실패: {exc}"))
+            await self._emit(BackendEvent(type="line_complete"))
 
     # ── Hanplanet auth flows ────────────────────────────────────────────────
 
