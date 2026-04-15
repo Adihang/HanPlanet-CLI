@@ -162,8 +162,9 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
             base_url=settings.base_url,
         )
     except _AuthMissing:
-        # 인증 미설정 — 더미 클라이언트로 런타임을 시작하고
-        # backend_host가 ready 후 provider picker를 자동으로 연다.
+        # No auth configured — start the runtime with a dummy client and let
+        # backend_host automatically open the provider picker once the TUI is ready.
+        # (인증 미설정 — 더미 클라이언트로 런타임을 시작하고 ready 후 provider picker 자동 실행)
         return OpenAICompatibleClient(
             api_key="__no_auth__",
             base_url="http://localhost",

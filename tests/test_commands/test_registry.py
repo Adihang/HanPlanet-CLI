@@ -19,12 +19,29 @@ from openharness.plugins.types import PluginCommandDefinition
 from openharness.state import AppState, AppStateStore
 from openharness.tasks import get_task_manager
 from openharness.tools import create_default_tool_registry
+from openharness.api.client import ApiMessageCompleteEvent, ApiMessageRequest
+from openharness.api.usage import UsageSnapshot
 
 
 class FakeApiClient:
     async def stream_message(self, request):
         del request
         raise AssertionError("stream_message should not be called in command tests")
+
+
+class DraftingApiClient:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.last_request: ApiMessageRequest | None = None
+
+    async def stream_message(self, request):
+        self.last_request = request
+        message = ConversationMessage(role="assistant", content=[TextBlock(text=self.text)])
+        yield ApiMessageCompleteEvent(
+            message=message,
+            usage=UsageSnapshot(input_tokens=12, output_tokens=34),
+            stop_reason="end_turn",
+        )
 
 
 def _make_engine(tmp_path: Path) -> QueryEngine:
@@ -570,13 +587,28 @@ async def test_agents_help_and_subagents_alias(tmp_path: Path, monkeypatch):
 async def test_init_and_bridge_commands(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    (tmp_path / "README.md").write_text("# Demo Project\n\nA sample Python project.", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[project]
+name = "demo-project"
+
+[project.scripts]
+demo = "demo:main"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
     init_command, init_args = registry.lookup("/init")
     init_result = await init_command.handler(init_args, context)
     assert "Initialized project files" in init_result.message or "already initialized" in init_result.message
-    assert (tmp_path / "CLAUDE.md").exists()
+    assert "AI draft failed, so a local scan fallback was used." in init_result.message
+    claude_md = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "demo-project" in claude_md
+    assert "uv run pytest -q" in claude_md
     assert (tmp_path / ".openharness" / "memory" / "MEMORY.md").exists()
 
     bridge_show_command, bridge_show_args = registry.lookup("/bridge show")
@@ -611,6 +643,39 @@ async def test_init_and_bridge_commands(tmp_path: Path, monkeypatch):
     bridge_stop_command, bridge_stop_args = registry.lookup(f"/bridge stop {session_id}")
     bridge_stop_result = await bridge_stop_command.handler(bridge_stop_args, context)
     assert f"Stopped bridge session {session_id}" in bridge_stop_result.message
+
+
+@pytest.mark.asyncio
+async def test_init_uses_model_and_force_overwrites(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    (tmp_path / "README.md").write_text("# Demo Project\n\nA sample Python project.", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        """
+[project]
+name = "demo-project"
+
+[project.scripts]
+demo = "demo:main"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    draft_client = DraftingApiClient("# Demo CLAUDE\n\n- Use the demo command.\n")
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+    context.engine.set_api_client(draft_client)
+    (tmp_path / "CLAUDE.md").write_text("old content", encoding="utf-8")
+
+    init_command, init_args = registry.lookup("/init --force")
+    init_result = await init_command.handler(init_args, context)
+
+    assert "Regenerated project files" in init_result.message
+    assert "AI draft failed" not in init_result.message
+    assert draft_client.last_request is not None
+    assert draft_client.last_request.model == "claude-test"
+    assert "Write a concise CLAUDE.md file" in draft_client.last_request.messages[0].text
+    assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "# Demo CLAUDE\n\n- Use the demo command."
 
 
 @pytest.mark.asyncio

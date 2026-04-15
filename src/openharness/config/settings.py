@@ -181,6 +181,9 @@ def normalize_anthropic_model_name(model: str) -> str:
 def default_provider_profiles() -> dict[str, ProviderProfile]:
     """Return the built-in provider workflow catalog."""
     return {
+        # Custom Hanplanet AI gateway — placed first so it appears at the top of
+        # the provider picker on first run.
+        # (커스텀 Hanplanet AI 게이트웨이 — 첫 실행 시 목록 상단에 표시)
         "hanplanet": ProviderProfile(
             label="Hanplanet",
             provider="openai",
@@ -635,6 +638,9 @@ class Settings(BaseModel):
         provider = profile.provider.strip()
         auth_source = profile.auth_source.strip() or default_auth_source_for_provider(provider, profile.api_format)
         if auth_source == "no_auth":
+            # Local providers (Ollama, vLLM) don't require an Authorization header.
+            # Return a dummy key so the OpenAI client initialises without error.
+            # (로컬 프로바이더는 Authorization 헤더 불필요 — 더미 키로 클라이언트 초기화)
             return ResolvedAuth(
                 provider=provider,
                 auth_kind="api_key",

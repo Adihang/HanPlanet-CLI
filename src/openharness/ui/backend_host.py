@@ -112,7 +112,9 @@ class ReactBackendHost:
         )
         await self._emit(self._status_snapshot())
 
-        # 인증이 설정되지 않은 경우 provider picker 자동 실행
+        # If no auth is configured, automatically open the provider picker so the
+        # user is guided through setup without having to type a command manually.
+        # (인증이 설정되지 않은 경우 provider picker 자동 실행)
         from openharness.api.provider import auth_status as _auth_status
         if _auth_status(self._bundle.current_settings()).startswith("missing"):
             await self._handle_select_command("provider")
@@ -307,6 +309,9 @@ class ReactBackendHost:
         async def _clear_output() -> None:
             await self._emit(BackendEvent(type="clear_transcript"))
 
+        # Silently refresh the Hanplanet access token before each turn if it is
+        # close to expiry, so the user never hits an authentication error mid-session.
+        # (매 턴 전 Hanplanet 토큰 만료 여부를 조용히 확인해 자동 갱신)
         await self._maybe_refresh_hanplanet_token()
 
         should_continue = await handle_line(
@@ -372,7 +377,8 @@ class ReactBackendHost:
                 return True
             # "list" falls through to _build_select_command_line
 
-        # /provider __custom_add__ → 인증 방식 멀티선택 후 커스텀 API 추가 플로우
+        # /provider __custom_add__ → show multi-select to pick auth method(s) for a new custom API profile
+        # (커스텀 API 추가 — 인증 방식을 선택하는 멀티셀렉트 표시)
         if command == "provider" and selected == "__custom_add__":
             options = [
                 {
@@ -394,22 +400,26 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="line_complete"))
             return True
 
-        # provider-add-auth: 멀티선택 결과 ("oauth", "apikey", "oauth,apikey" 등)
+        # provider-add-auth: multi-select result arrives as comma-separated values ("oauth", "apikey", "oauth,apikey", …)
+        # (멀티선택 결과가 쉼표로 구분된 문자열로 도착)
         if command == "provider-add-auth":
             auth_methods = {m.strip() for m in selected.split(",") if m.strip()}
             await self._custom_provider_add_flow(auth_methods=auth_methods)
             return True
 
-        # /provider 사용자 추가 커스텀 프로바이더 → 관리 메뉴 (builtin/special/__ 가 아닌 경우)
+        # /provider <name> → open management menu when the profile is user-added (not a built-in or special entry)
+        # (사용자 추가 커스텀 프로바이더 선택 시 관리 메뉴 표시)
         if command == "provider" and not selected.startswith("__"):
             from openharness.config.settings import builtin_provider_profile_names
             _builtin_names = builtin_provider_profile_names()
-            # ollama는 기본 카탈로그에 없지만 special 처리
+            # "ollama" is not in the built-in catalog but is handled specially elsewhere
+            # (ollama는 기본 카탈로그에 없지만 별도로 special 처리)
             if selected not in _builtin_names and selected != "ollama":
                 await self._handle_select_command(f"custom-provider-{selected}")
                 return True
 
-        # custom-provider-manage: action::profile_name
+        # custom-provider-manage: encoded as "action::profile_name" (e.g. "oauth::myprovider")
+        # (action::profile_name 형식으로 인코딩된 관리 커맨드)
         if command == "custom-provider-manage":
             parts = selected.split("::", 1)
             if len(parts) == 2:
@@ -445,7 +455,9 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="line_complete"))
             return True
         result = await self._process_line(line, transcript_line=f"/{command}")
-        # 프로바이더 전환 후 자동으로 모델 선택 화면 표시
+        # After switching the provider, immediately open the model picker so the
+        # user doesn't have to run /model as a separate step.
+        # (프로바이더 전환 후 자동으로 모델 선택 화면 표시)
         if command == "provider":
             await self._handle_select_command("model")
         return result
@@ -582,7 +594,9 @@ class ReactBackendHost:
             statuses = AuthManager(settings).get_profile_statuses()
             builtin_names = builtin_provider_profile_names()
 
-            # 설정됨/활성 우선, 그 다음 기본 내장, 마지막에 미설정 내장
+            # Sort order: active first, then other configured profiles,
+            # then user-added custom profiles, finally unconfigured built-ins.
+            # (정렬: 활성 → 설정됨 → 사용자 추가 커스텀 → 미설정 기본)
             def _sort_key(item: tuple) -> tuple:
                 name, info = item
                 if info["active"]:
@@ -590,7 +604,7 @@ class ReactBackendHost:
                 if info["configured"]:
                     return (1, name)
                 if name not in builtin_names:
-                    return (2, name)   # 사용자 추가 커스텀
+                    return (2, name)   # user-added custom profile (사용자 추가 커스텀)
                 return (3, name)
 
             PROVIDER_EMOJI = {
@@ -619,7 +633,8 @@ class ReactBackendHost:
                     "description": desc,
                     "active": info["active"],
                 })
-            # 커스텀 API 추가 옵션
+            # Append a sentinel entry that triggers the custom-API registration flow
+            # (커스텀 API 추가 플로우를 여는 특수 항목)
             options.append({
                 "value": "__custom_add__",
                 "label": "➕  커스텀 API 추가",
@@ -637,7 +652,7 @@ class ReactBackendHost:
 
         if command.startswith("custom-provider-"):
             profile_name = command[len("custom-provider-"):]
-            # 등록 시 선택했던 인증 방식 목록 로드
+            # Load the auth methods that were chosen when this profile was registered
             from openharness.auth.storage import load_credential
             stored_methods_raw = ""
             try:
@@ -645,7 +660,8 @@ class ReactBackendHost:
             except Exception:
                 pass
             stored_methods = {m.strip() for m in stored_methods_raw.split(",") if m.strip()}
-            # 하위 호환: auth_methods 없으면 oauth_auth_url 존재 여부로 판단
+            # Backwards-compatibility: if "auth_methods" was never stored, infer
+            # from the presence of oauth_auth_url / api_key credentials.
             if not stored_methods:
                 try:
                     if load_credential(profile_name, "oauth_auth_url"):
@@ -658,7 +674,7 @@ class ReactBackendHost:
                 except Exception:
                     pass
                 if not stored_methods:
-                    stored_methods.add("apikey")  # 기본 fallback
+                    stored_methods.add("apikey")  # default fallback when nothing else is stored
             profile_label = profile_name
             if profile_name in (settings.provider_profiles or {}):
                 profile_label = settings.provider_profiles[profile_name].label or profile_name
@@ -1548,6 +1564,7 @@ class ReactBackendHost:
         ))
         await self._emit(BackendEvent(type="line_complete"))
 
+    # ── Custom provider management (re-auth / key change / delete) ──────────
     # ── 커스텀 프로바이더 관리 (재인증 / 키 변경 / 삭제) ─────────────────────
 
     async def _custom_provider_oauth_reauth_flow(
@@ -1556,7 +1573,9 @@ class ReactBackendHost:
         model_name: str | None = None,
         base_url: str | None = None,
     ) -> None:
-        """저장된 OAuth URL로 커스텀 프로바이더를 브라우저 인증한다."""
+        """Re-authenticate a custom provider using the OAuth URL stored at registration time.
+        (저장된 OAuth URL로 커스텀 프로바이더를 브라우저 인증한다.)
+        """
         try:
             await self._custom_provider_oauth_reauth_flow_inner(profile_name, model_name, base_url)
         except Exception as exc:
@@ -1596,7 +1615,8 @@ class ReactBackendHost:
             timeout_seconds=300,
         ))
 
-        # 브라우저 열기 시도
+        # Attempt to open the browser automatically (브라우저 열기 시도)
+
         try:
             plat = platform.system()
             if plat == "Darwin":
@@ -1611,7 +1631,8 @@ class ReactBackendHost:
         access_token: str | None = None
 
         if oauth_token_url:
-            # 폴링으로 토큰 획득
+            # Poll the token URL until the user completes the browser flow or 300 s elapse
+            # (브라우저 인증 완료 또는 300초 타임아웃까지 토큰 URL 폴링)
             try:
                 import httpx
                 deadline = asyncio.get_running_loop().time() + 300
@@ -1640,7 +1661,8 @@ class ReactBackendHost:
                 await self._emit(BackendEvent(type="line_complete"))
                 return
         else:
-            # 폴링 URL 없음 → 사용자가 직접 토큰을 붙여넣기
+            # No polling URL — ask the user to paste the token manually
+            # (폴링 URL 없음 → 사용자가 직접 토큰을 붙여넣기)
             token_raw = await self._ask_question(
                 "인증 완료 후 발급된 API 토큰을 여기에 붙여넣으세요:"
             )
@@ -1653,7 +1675,7 @@ class ReactBackendHost:
         manager = AuthManager(settings)
         manager.store_profile_credential(profile_name, "api_key", access_token)
 
-        # 런타임 상태 갱신
+        # Update runtime state to reflect the new credential (런타임 상태 갱신)
         updated_settings = load_settings()
         assert self._bundle is not None
         _model = model_name or updated_settings.provider_profiles.get(profile_name, None)
@@ -1676,7 +1698,9 @@ class ReactBackendHost:
         await self._emit(BackendEvent(type="line_complete"))
 
     async def _custom_provider_apikey_change_flow(self, profile_name: str) -> None:
-        """커스텀 프로바이더의 API 키를 변경한다."""
+        """Change the API key for a custom provider profile.
+        (커스텀 프로바이더의 API 키를 변경한다.)
+        """
         try:
             new_key_raw = await self._ask_question(
                 f"'{profile_name}'의 새 API 키를 입력하세요:"
@@ -1706,7 +1730,9 @@ class ReactBackendHost:
             await self._emit(BackendEvent(type="line_complete"))
 
     async def _custom_provider_delete(self, profile_name: str) -> None:
-        """커스텀 프로바이더 프로파일과 크리덴셜을 삭제한다."""
+        """Delete a custom provider profile and all its stored credentials.
+        (커스텀 프로바이더 프로파일과 크리덴셜을 삭제한다.)
+        """
         try:
             from openharness.auth.manager import AuthManager
             from openharness.config.settings import load_settings
@@ -1716,7 +1742,8 @@ class ReactBackendHost:
             _, active_prof = settings.resolve_profile()
             manager = AuthManager(settings)
 
-            # 현재 활성 프로파일이면 기본으로 전환 후 삭제
+            # If this is the currently active profile, switch to the default before deleting
+            # (현재 활성 프로파일이면 기본으로 전환 후 삭제)
             if active_prof == profile_name:
                 try:
                     manager.use_profile("claude-api")
@@ -1772,7 +1799,8 @@ class ReactBackendHost:
             + urlencode({"state": state})
         )
 
-        # URL을 먼저 출력 (브라우저가 자동으로 안 열릴 경우 직접 열 수 있도록)
+        # Print the URL first so the user can open it manually if the browser doesn't launch
+        # (브라우저가 자동으로 안 열릴 경우 직접 열 수 있도록 URL을 먼저 출력)
         await self._emit(BackendEvent(
             type="info",
             message=f"Hanplanet 로그인 URL: {login_url}",
@@ -1783,7 +1811,7 @@ class ReactBackendHost:
             timeout_seconds=300,
         ))
 
-        # 크로스플랫폼 브라우저 열기 시도
+        # Cross-platform browser launch attempt (크로스플랫폼 브라우저 열기 시도)
         try:
             plat = platform.system()
             if plat == "Darwin":
@@ -1795,7 +1823,8 @@ class ReactBackendHost:
         except Exception:
             pass
 
-        # 사용자가 브라우저에서 "연결" 버튼을 클릭할 때까지 폴링 (최대 300초)
+        # Poll until the user clicks "Connect" in the browser, or 300 s elapses
+        # (사용자가 브라우저에서 "연결" 버튼을 클릭할 때까지 폴링, 최대 300초)
         try:
             import httpx
             deadline = asyncio.get_running_loop().time() + 300
@@ -1810,8 +1839,8 @@ class ReactBackendHost:
                     if resp.status_code == 200:
                         tokens = resp.json()
                         break
-                    # 202 → pending, 계속 폴링
-                    # cancelled 응답은 즉시 종료
+                    # 202 → still pending, keep polling; cancelled response exits immediately
+                    # (202 → pending 계속 폴링, cancelled 응답은 즉시 종료)
             if tokens is None:
                 raise asyncio.TimeoutError
         except asyncio.TimeoutError:
@@ -1893,7 +1922,9 @@ class ReactBackendHost:
         await self._emit(BackendEvent(type="line_complete"))
 
     async def _maybe_refresh_hanplanet_token(self) -> None:
-        """Hanplanet 프로파일 사용 중이면 access token 만료 여부를 확인하고 필요 시 refresh."""
+        """Check if the Hanplanet access token is about to expire and refresh proactively.
+        (Hanplanet 프로파일 사용 중이면 access token 만료 여부를 확인하고 필요 시 refresh.)
+        """
         assert self._bundle is not None
         settings = self._bundle.current_settings()
         _, active_profile = settings.resolve_profile()
@@ -1905,12 +1936,13 @@ class ReactBackendHost:
             token = load_credential("profile:hanplanet", "api_key") or ""
             if not token:
                 return
-            # JWT payload는 두 번째 세그먼트
+            # JWT payload is in the second segment (JWT payload는 두 번째 세그먼트)
             padding = token.split(".")[1] if token.count(".") == 2 else ""
             padding += "=" * (-len(padding) % 4)
             payload = _json.loads(base64.urlsafe_b64decode(padding))
             exp = payload.get("exp", 0)
-            # 만료까지 5분 이하 남았으면 미리 refresh
+            # Refresh when fewer than 5 minutes remain until expiry
+            # (만료까지 5분 이하 남았으면 미리 refresh)
             if exp - time.time() < 300:
                 new_token = await ReactBackendHost._hanplanet_refresh_token()
                 if new_token:
@@ -1921,7 +1953,10 @@ class ReactBackendHost:
 
     @staticmethod
     async def _hanplanet_refresh_token() -> str | None:
-        """refresh token으로 새 access token 발급 후 저장. 실패 시 None 반환."""
+        """Issue a new access token using the stored refresh token and persist it.
+        Returns None on any failure.
+        (refresh token으로 새 access token 발급 후 저장. 실패 시 None 반환.)
+        """
         try:
             from openharness.auth.storage import load_credential, store_credential
             import httpx
@@ -2022,6 +2057,9 @@ class ReactBackendHost:
             sys.stdout.flush()
 
 
+# Ordered list that controls the sort order of commands in the command picker.
+# Frequently used commands appear near the top; all others fall to the bottom.
+# (커맨드 피커에 표시되는 순서를 결정하는 우선순위 목록)
 _COMMAND_PRIORITY = [
     "clear", "config", "model", "provider", "memory", "help",
     "continue", "rewind", "tasks", "agents", "skills", "plugin",

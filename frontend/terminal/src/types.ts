@@ -64,6 +64,8 @@ export type SwarmNotificationSnapshot = {
 	timestamp: number;
 };
 
+// Custom: richer command descriptor replacing the plain string list.
+// The backend sends {name, description} so the command picker can show inline hints.
 export type CommandInfo = {
 	name: string;
 	description: string;
@@ -92,7 +94,7 @@ export type BackendEvent = {
 	todo_items?: TodoItemSnapshot[] | null;
 	todo_markdown?: string | null;
 	plan_mode?: string | null;
-	timeout_seconds?: number | null;
+	timeout_seconds?: number | null; // Used by 'oauth_pending' to drive the countdown banner
 	swarm_teammates?: SwarmTeammateSnapshot[] | null;
 	swarm_notifications?: SwarmNotificationSnapshot[] | null;
 };

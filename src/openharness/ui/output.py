@@ -34,7 +34,8 @@ class OutputRenderer:
         self._spinner_start_time: float | None = None
         self._spinner_stop_event: threading.Event | None = None
         self._spinner_update_thread: threading.Thread | None = None
-        # 직전 턴까지의 누적 토큰 (스피너에 표시)
+        # Cumulative token counts from the previous turn — displayed in the spinner label
+        # (직전 턴까지의 누적 토큰 — 스피너 레이블에 표시)
         self._session_input_tokens: int = 0
         self._session_output_tokens: int = 0
 
@@ -171,7 +172,8 @@ class OutputRenderer:
         permission_mode: str = "default",
     ) -> None:
         """Print a compact status line after each turn."""
-        # 다음 스피너에서 누적 토큰을 표시할 수 있도록 저장
+        # Persist token counts so the next spinner can show running totals
+        # (다음 스피너에서 누적 토큰을 표시할 수 있도록 저장)
         self._session_input_tokens = input_tokens
         self._session_output_tokens = output_tokens
 
@@ -189,7 +191,9 @@ class OutputRenderer:
         self.console.clear()
 
     def _make_spinner_text(self) -> str:
-        """스피너에 표시할 텍스트: 레이블 + 경과 시간 + 누적 토큰."""
+        """Build spinner text: label + elapsed time + cumulative token counts.
+        (스피너 텍스트 생성: 레이블 + 경과 시간 + 누적 토큰)
+        """
         parts = [f"[cyan]{self._spinner_label}...[/cyan]"]
         if self._spinner_start_time is not None:
             elapsed = time.monotonic() - self._spinner_start_time
@@ -203,7 +207,9 @@ class OutputRenderer:
         return "  ".join(parts)
 
     def _start_spinner_update_thread(self) -> None:
-        """매초 스피너 텍스트를 갱신하는 데몬 스레드."""
+        """Daemon thread that refreshes the spinner text every second.
+        (매초 스피너 텍스트를 갱신하는 데몬 스레드)
+        """
         stop_event = self._spinner_stop_event
 
         def _tick() -> None:

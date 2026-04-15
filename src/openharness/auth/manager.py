@@ -263,6 +263,9 @@ class AuthManager:
         auth_sources = self.get_auth_source_statuses()
         statuses: dict[str, Any] = {}
         for name, profile in self.list_profiles().items():
+            # Local providers (Ollama, vLLM, etc.) need no credentials — mark as
+            # always configured so they show up ready-to-use in the UI.
+            # (Ollama 등 로컬 프로바이더는 크리덴셜이 불필요하므로 항상 configured로 표시)
             if profile.auth_source == "no_auth":
                 statuses[name] = {
                     "label": display_label_for_profile(name, profile),

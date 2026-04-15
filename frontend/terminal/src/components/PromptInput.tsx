@@ -29,6 +29,9 @@ export function PromptInput({
 	return (
 		<Box flexDirection="column">
 			{busy ? (
+				// Custom: removed the upstream braille-frame animation row ("Agent is working…").
+				// The Spinner component now handles the animated indicator on its own.
+				// (업스트림의 braille 프레임 애니메이션 줄 제거 — Spinner 컴포넌트가 직접 처리)
 				<Box marginBottom={0}>
 					<Spinner label={statusLabel ?? (toolName ? `Running ${toolName}...` : undefined)} />
 				</Box>

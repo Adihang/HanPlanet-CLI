@@ -7,6 +7,7 @@ import json
 import re
 import shutil
 import subprocess
+import tomllib
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,13 +27,13 @@ from openharness.config.paths import (
 from openharness.bridge import get_bridge_manager
 from openharness.bridge.types import WorkSecret
 from openharness.bridge.work_secret import build_sdk_url, decode_work_secret, encode_work_secret
+from openharness.api.client import ApiMessageCompleteEvent, ApiMessageRequest, ApiTextDeltaEvent
 from openharness.api.provider import auth_status, detect_provider
 from openharness.config.settings import Settings, display_model_setting, load_settings, save_settings
 from openharness.engine.messages import ConversationMessage, sanitize_conversation_messages
 from openharness.engine.query_engine import QueryEngine
 from openharness.memory import (
     add_memory_entry,
-    get_memory_entrypoint,
     get_project_memory_dir,
     list_memory_files,
     remove_memory_entry,
@@ -144,8 +145,8 @@ def _run_git_command(cwd: str, *args: str) -> tuple[bool, str]:
             cwd=cwd,
             capture_output=True,
             text=True,
-            encoding="utf-8",
-            errors="replace",
+            encoding="utf-8",   # Explicit encoding to handle non-ASCII repo paths / commit messages
+            errors="replace",   # Replace undecodable bytes rather than crashing
             check=False,
         )
     except FileNotFoundError:
@@ -154,6 +155,211 @@ def _run_git_command(cwd: str, *args: str) -> tuple[bool, str]:
     if completed.returncode != 0:
         return False, output or f"git {' '.join(args)} failed"
     return True, output
+
+
+def _read_text_excerpt(path: Path, max_chars: int = 2000) -> str:
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+    if len(content) > max_chars:
+        return content[:max_chars].rstrip() + "\n...[truncated]..."
+    return content
+
+
+def _first_markdown_heading(text: str) -> str | None:
+    for line in text.splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return None
+
+
+def _load_pyproject(path: Path) -> dict[str, object]:
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def _generate_claude_md(cwd: Path) -> str:
+    project_name = cwd.name
+    readme = cwd / "README.md"
+    pyproject = cwd / "pyproject.toml"
+    package_json = cwd / "package.json"
+    project_summary = None
+    detected_dirs: list[str] = []
+    commands: list[str] = []
+
+    if readme.exists():
+        readme_text = _read_text_excerpt(readme, max_chars=4000)
+        project_summary = _first_markdown_heading(readme_text) or "Local project README found."
+
+    pyproject_data = _load_pyproject(pyproject) if pyproject.exists() else {}
+    project_data = pyproject_data.get("project")
+    if isinstance(project_data, dict):
+        name = project_data.get("name")
+        if isinstance(name, str) and name.strip():
+            project_name = name.strip()
+        scripts = project_data.get("scripts")
+        if isinstance(scripts, dict):
+            for script_name, script_cmd in scripts.items():
+                if isinstance(script_name, str) and isinstance(script_cmd, str):
+                    commands.append(f"- `{script_name}`: `{script_cmd}`")
+
+    if (cwd / "src").is_dir():
+        detected_dirs.append("src")
+    if (cwd / "tests").is_dir():
+        detected_dirs.append("tests")
+    if (cwd / "scripts").is_dir():
+        detected_dirs.append("scripts")
+    if (cwd / "frontend").is_dir():
+        detected_dirs.append("frontend")
+    if (cwd / "ohmo").is_dir():
+        detected_dirs.append("ohmo")
+
+    if pyproject.exists():
+        commands.extend(
+            [
+                "- `uv sync --extra dev`",
+                "- `uv run pytest -q`",
+                "- `uv run ruff check src tests scripts`",
+            ]
+        )
+        if (cwd / "frontend" / "terminal").is_dir():
+            commands.append("- `cd frontend/terminal && npm ci`")
+    elif package_json.exists():
+        commands.extend(
+            [
+                "- `npm install`",
+                "- `npm test`",
+            ]
+        )
+
+    lines = [
+        "# Project Instructions",
+        "",
+        "This file was generated from a local project scan. Review and refine it before relying on it.",
+        "",
+        "## Overview",
+        f"- Project: `{project_name}`",
+    ]
+    if project_summary:
+        lines.append(f"- README summary: {project_summary}")
+    if detected_dirs:
+        lines.append(f"- Detected directories: {', '.join(f'`{item}`' for item in detected_dirs)}")
+
+    lines.extend(
+        [
+            "",
+            "## Working Rules",
+            "- Use OpenHarness tools deliberately.",
+            "- Keep changes minimal and verify with tests when possible.",
+            "- Read relevant files before editing.",
+            "- Prefer editing existing files over adding new ones unless necessary.",
+            "",
+            "## Suggested Commands",
+        ]
+    )
+    if commands:
+        lines.extend(commands)
+    else:
+        lines.append("- Add project-specific commands here.")
+
+    return "\n".join(lines) + "\n"
+
+
+def _build_claude_md_scan_summary(cwd: Path) -> str:
+    parts: list[str] = []
+    readme = cwd / "README.md"
+    pyproject = cwd / "pyproject.toml"
+
+    if readme.exists():
+        summary = _first_markdown_heading(_read_text_excerpt(readme, max_chars=4000))
+        if summary:
+            parts.append(f"README heading: {summary}")
+
+    if pyproject.exists():
+        pyproject_data = _load_pyproject(pyproject)
+        project_data = pyproject_data.get("project")
+        if isinstance(project_data, dict):
+            name = project_data.get("name")
+            if isinstance(name, str) and name.strip():
+                parts.append(f"Project name: {name.strip()}")
+            dependencies = project_data.get("dependencies")
+            if isinstance(dependencies, list) and dependencies:
+                preview = ", ".join(str(item) for item in dependencies[:8])
+                parts.append(f"Dependencies: {preview}")
+            scripts = project_data.get("scripts")
+            if isinstance(scripts, dict) and scripts:
+                script_names = ", ".join(str(name) for name in list(scripts)[:8])
+                parts.append(f"Scripts: {script_names}")
+
+    directories = [name for name in ("src", "tests", "scripts", "frontend", "ohmo") if (cwd / name).is_dir()]
+    if directories:
+        parts.append(f"Detected directories: {', '.join(directories)}")
+
+    if not parts:
+        return "No notable project files were found."
+    return "\n".join(f"- {item}" for item in parts)
+
+
+def _extract_text_from_assistant_message(message: ConversationMessage) -> str:
+    return message.text.strip()
+
+
+async def _draft_claude_md_with_model(cwd: Path, context: CommandContext) -> tuple[str | None, bool]:
+    try:
+        request_prompt = "\n".join(
+            [
+                "Write a concise CLAUDE.md file for this repository.",
+                "Return markdown only. Do not wrap the answer in code fences.",
+                "Include:",
+                "- a short project overview",
+                "- working rules for this repository",
+                "- useful commands for development and verification",
+                "- any special notes that matter for editing this codebase",
+                "",
+                "Project scan summary:",
+                _build_claude_md_scan_summary(cwd),
+            ]
+        )
+        system_prompt = "\n".join(
+            [
+                "You are generating a project instruction file named CLAUDE.md.",
+                "Write for the local repository only.",
+                "Be specific, concise, and action-oriented.",
+                "Prefer bullets over paragraphs.",
+                "Do not invent commands or paths that are not supported by the project scan.",
+            ]
+        )
+        request = ApiMessageRequest(
+            model=context.engine.model,
+            messages=[ConversationMessage.from_user_text(request_prompt)],
+            system_prompt=system_prompt,
+            max_tokens=1800,
+        )
+
+        chunks: list[str] = []
+        final_message: ConversationMessage | None = None
+        stream = context.engine.api_client.stream_message(request)
+        if not hasattr(stream, "__aiter__"):
+            stream = await stream
+        async for event in stream:
+            if isinstance(event, ApiTextDeltaEvent):
+                chunks.append(event.text)
+            elif isinstance(event, ApiMessageCompleteEvent):
+                final_message = event.message
+                if not chunks:
+                    chunks.append(_extract_text_from_assistant_message(event.message))
+
+        draft = "".join(chunks).strip()
+        if not draft and final_message is not None:
+            draft = _extract_text_from_assistant_message(final_message)
+        if not draft:
+            return None, False
+        return draft, False
+    except Exception:
+        return None, True
 
 
 def _copy_to_clipboard(text: str) -> tuple[bool, str]:
@@ -391,7 +597,6 @@ def create_default_command_registry(
         )
 
     async def _memory_handler(args: str, context: CommandContext) -> CommandResult:
-        import asyncio
         tokens = args.split(maxsplit=1)
         action = tokens[0] if tokens else ""
         rest = tokens[1] if len(tokens) == 2 else ""
@@ -626,18 +831,18 @@ def create_default_command_registry(
         return CommandResult(message="\n".join(lines))
 
     async def _init_handler(args: str, context: CommandContext) -> CommandResult:
-        del args
-        project_dir = get_project_config_dir(context.cwd)
+        tokens = args.split()
+        force = any(token in {"--force", "-f"} for token in tokens)
+        cwd = Path(context.cwd)
+        project_dir = get_project_config_dir(cwd)
         created: list[str] = []
 
-        claudemd = Path(context.cwd) / "CLAUDE.md"
-        if not claudemd.exists():
-            claudemd.write_text(
-                "# Project Instructions\n\n"
-                "- Use OpenHarness tools deliberately.\n"
-                "- Keep changes minimal and verify with tests when possible.\n",
-                encoding="utf-8",
-            )
+        claudemd = cwd / "CLAUDE.md"
+        claudemd_existed = claudemd.exists()
+        model_fallback_used = False
+        if force or not claudemd.exists():
+            drafted, model_fallback_used = await _draft_claude_md_with_model(cwd, context)
+            claudemd.write_text(drafted or _generate_claude_md(cwd), encoding="utf-8")
             created.append(str(claudemd.relative_to(Path(context.cwd))))
 
         for relative, content in (
@@ -665,7 +870,13 @@ def create_default_command_registry(
 
         if not created:
             return CommandResult(message="Project already initialized for OpenHarness.")
-        return CommandResult(message="Initialized project files:\n" + "\n".join(f"- {item}" for item in created))
+        header = "Initialized project files"
+        if force and claudemd_existed:
+            header = "Regenerated project files"
+        message = f"{header}:\n" + "\n".join(f"- {item}" for item in created)
+        if model_fallback_used:
+            message += "\n\nAI draft failed, so a local scan fallback was used."
+        return CommandResult(message=message)
 
     async def _bridge_handler(args: str, context: CommandContext) -> CommandResult:
         tokens = args.split()
@@ -744,7 +955,8 @@ def create_default_command_registry(
         sub = tokens[0].lower() if tokens else ""
         rest = tokens[1].strip() if len(tokens) > 1 else ""
 
-        # /skills preload <name|*>  — 스킬 내용을 시스템 프롬프트에 항상 주입
+        # /skills preload <name|*>  — inject skill content into the system prompt permanently
+        # (스킬 내용을 시스템 프롬프트에 항상 주입 — 로컬 모델처럼 tool 호출을 못하는 모델용)
         if sub == "preload":
             if not rest:
                 return CommandResult(message="Usage: /skills preload <skill_name|*>")
@@ -759,7 +971,8 @@ def create_default_command_registry(
                 refresh_runtime=True,
             )
 
-        # /skills unload <name|*>  — preload 해제
+        # /skills unload <name|*>  — remove a skill from the permanent preload list
+        # (preload 목록에서 해제)
         if sub == "unload":
             if not rest:
                 return CommandResult(message="Usage: /skills unload <skill_name|*>")
@@ -775,7 +988,8 @@ def create_default_command_registry(
                 )
             return CommandResult(message=f"'{rest}'는 preload 목록에 없습니다.")
 
-        # /skills list (또는 인자 없음)
+        # /skills list (or no args) — show all skills with preload status markers
+        # (전체 스킬 목록 표시, preload된 항목은 * 마커)
         if not args or sub == "list":
             settings = load_settings()
             preloaded: list[str] = list(getattr(settings, "preload_skills", None) or [])
@@ -792,7 +1006,8 @@ def create_default_command_registry(
             lines.append("\nUsage: /skills preload <name|*>  |  /skills unload <name>")
             return CommandResult(message="\n".join(lines))
 
-        # /skills <skill_name>  — 스킬 내용 보기
+        # /skills <skill_name>  — show the full content of a single skill
+        # (스킬 내용 보기)
         skill = skill_registry.get(args)
         if skill is None:
             return CommandResult(message=f"Skill not found: {args}\nTip: /skills list")
@@ -1362,8 +1577,6 @@ def create_default_command_registry(
                 return CommandResult(message=f"Permission mode set to {label}", refresh_runtime=True)
             return CommandResult(message="Usage: /permissions [show|default|auto|plan]")
 
-        current = settings.permission.mode.value
-
         # Non-interactive fallback: show current status
         permission = settings.permission
         label = _MODE_LABELS.get(permission.mode.value, permission.mode.value)
@@ -1727,14 +1940,17 @@ def create_default_command_registry(
         )
 
     async def _update_handler(args: str, context: CommandContext) -> CommandResult:
-        """git pull로 최신 소스를 받아 HanHarness를 업데이트한다."""
+        """Update HanHarness to the latest version via git pull.
+        (git pull로 최신 소스를 받아 HanHarness를 업데이트한다.)
+        """
         import subprocess
         import sys
         from pathlib import Path
 
         force = args.strip().lower() == "force"
 
-        # editable 설치 시 소스 위치: src/openharness/ → repo root
+        # Resolve the repo root from the editable install location: src/openharness/ → repo root
+        # (editable 설치 시 소스 위치: src/openharness/ → repo root)
         try:
             import openharness as _oh_pkg
             repo_root = Path(_oh_pkg.__file__).parents[2]
@@ -1751,14 +1967,17 @@ def create_default_command_registry(
             )
 
         def _pip_install() -> str:
-            """현재 인터프리터로 editable 재설치 (의존성 반영)."""
+            """Re-install in editable mode with the current interpreter to pick up dependency changes.
+            (현재 인터프리터로 editable 재설치 — 의존성 변경 반영)
+            """
             r = subprocess.run(
                 [sys.executable, "-m", "pip", "install", "-e", str(repo_root), "--quiet"],
                 capture_output=True, text=True, timeout=120,
             )
             return (r.stdout + r.stderr).strip()
 
-        # 강제 재설치 모드
+        # Force-reinstall mode: skip git pull, just re-run pip install -e
+        # (강제 재설치 모드: git pull 없이 pip install -e만 실행)
         if force:
             pip_out = _pip_install()
             return CommandResult(

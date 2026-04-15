@@ -1,6 +1,10 @@
 import React, {useEffect, useState} from 'react';
 import {Box, Text} from 'ink';
 
+/**
+ * Custom component: displays a live countdown banner while an OAuth flow is in progress.
+ * Shown when the backend emits an 'oauth_pending' event and hidden on 'line_complete' / 'error'.
+ */
 export function OAuthCountdown({
 	message,
 	endsAt,

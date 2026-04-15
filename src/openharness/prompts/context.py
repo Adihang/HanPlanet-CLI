@@ -33,7 +33,8 @@ def _build_skills_section(
     if not skills:
         return None
 
-    # Determine which skills to preload (inject full content)
+    # Determine which skills to preload (inject full content into the system prompt)
+    # (어떤 스킬을 시스템 프롬프트에 직접 주입할지 결정)
     preload_names: set[str] = set()
     if settings is not None:
         raw = getattr(settings, "preload_skills", None) or []
@@ -43,6 +44,7 @@ def _build_skills_section(
             preload_names = {n.strip() for n in raw if n.strip()}
 
     # Skills that are NOT preloaded → listed for on-demand tool invocation
+    # (preload 대상이 아닌 스킬 → tool 호출로 온디맨드 로드)
     on_demand = [s for s in skills if s.name not in preload_names]
     preloaded = [s for s in skills if s.name in preload_names]
 
@@ -109,6 +111,8 @@ def build_runtime_system_prompt(
     if not is_coordinator_mode() and settings.system_prompt is None:
         sections[0] = build_system_prompt(cwd=str(cwd))
 
+    # Inject a language instruction so the model responds in the configured language
+    # (설정된 언어로 응답하도록 언어 지시문을 시스템 프롬프트에 추가)
     if settings.language:
         sections.append(
             f"# Language Instruction\n"

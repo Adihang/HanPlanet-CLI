@@ -104,9 +104,10 @@ class CompactionResult:
     hook_results: list[CompactAttachment]
     compact_metadata: dict[str, Any] = field(default_factory=dict)
 
-# Ollama 로컬 모델의 실제 컨텍스트 크기.
-# OLLAMA_NUM_CTX 환경변수로 Hanplanet 프록시에 설정된 값과 일치시켜 auto-compact 임계값을 올바르게 계산한다.
-# 0이면 비활성화 (기본 fallback 사용).
+# Actual context size for local Ollama models.
+# Set OLLAMA_NUM_CTX to match the value configured in the Ollama/Hanplanet proxy
+# so the auto-compact threshold is calculated correctly.  0 = disabled (use default fallback).
+# (Ollama 로컬 모델의 실제 컨텍스트 크기. OLLAMA_NUM_CTX 환경변수로 auto-compact 임계값 조정. 0이면 비활성화.)
 import os as _os
 _OLLAMA_NUM_CTX = int(_os.environ.get("OLLAMA_NUM_CTX", 0))
 
@@ -931,7 +932,8 @@ def get_context_window(model: str, *, context_window_tokens: int | None = None) 
     m = model.lower()
     if "opus" in m or "sonnet" in m or "haiku" in m:
         return 200_000
-    # Ollama 로컬 모델 — OLLAMA_NUM_CTX 환경변수와 일치시켜 auto-compact가 올바른 시점에 동작하도록 함
+    # Local Ollama models — use OLLAMA_NUM_CTX so auto-compact fires at the right threshold
+    # (Ollama 로컬 모델 — OLLAMA_NUM_CTX 환경변수와 일치시켜 auto-compact가 올바른 시점에 동작)
     if _OLLAMA_NUM_CTX and any(x in m for x in ("gemma", "llama", "qwen", "mistral", "phi", "deepseek", "falcon", "solar")):
         return _OLLAMA_NUM_CTX
     # Other providers — be conservative

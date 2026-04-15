@@ -528,6 +528,12 @@ def _configure_custom_profile_via_setup(manager) -> str:
 
 
 def _configure_ollama_profile(manager) -> str:
+    """Interactively configure a no-auth Ollama/local provider profile.
+    Prompts for a profile name, display label, base URL, and default model,
+    then upserts the profile with auth_source='no_auth'.
+    (Ollama/로컬 프로바이더 프로필을 대화식으로 설정. 프로필 이름·라벨·URL·모델을 입력받아
+    auth_source='no_auth'로 저장)
+    """
     from openharness.config.settings import ProviderProfile
 
     name = _text_prompt("Profile name", default="ollama").strip() or "ollama"
@@ -667,7 +673,9 @@ def _ensure_profile_auth(manager, profile_name: str) -> None:
 
     profile = manager.list_profiles()[profile_name]
     if profile.auth_source == "no_auth":
-        return  # local providers don't need credentials
+        # Local providers (Ollama, vLLM, etc.) require no credentials — skip auth setup entirely.
+        # (Ollama 등 로컬 프로바이더는 인증 정보가 불필요하므로 auth 설정 단계를 건너뜀)
+        return
     if not auth_source_uses_api_key(profile.auth_source):
         _login_provider(auth_source_provider_name(profile.auth_source))
         return
@@ -794,7 +802,10 @@ def setup_cmd(
         print("No provider profiles available.", file=sys.stderr)
         raise typer.Exit(1)
 
-    # Inject a virtual "ollama" entry so users can configure Ollama even before a profile exists
+    # Inject a virtual "ollama" entry so users can configure Ollama even before a profile exists.
+    # Without this, the setup picker would show no Ollama option until a profile is already saved.
+    # (프로필이 없어도 Ollama 선택지가 보이도록 가상 항목을 picker에 추가.
+    #  프로필이 이미 있으면 중복 추가를 피하기 위해 건너뜀)
     if not any(p.provider == "ollama" for p in manager.list_profiles().values()):
         statuses = {
             **statuses,

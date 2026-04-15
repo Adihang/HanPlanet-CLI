@@ -1,6 +1,11 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 
+/**
+ * Custom component: a checkbox-style multi-select modal rendered inline in the terminal.
+ * The parent (App) owns cursor/checked state; key handling lives in App's useInput handler.
+ * Used for flows where the user must pick one or more options (e.g. custom API auth methods).
+ */
 export type MultiSelectOption = {
 	value: string;
 	label: string;
@@ -38,6 +43,7 @@ export function MultiSelectModal({
 				);
 			})}
 			<Text> </Text>
+			{/* ↑↓ navigate  space check/uncheck  enter confirm  esc cancel (체크/해제) */}
 			<Text dimColor>{'\u2191\u2193'} navigate{'  '}space 체크{'  '}enter 완료{'  '}esc 취소</Text>
 		</Box>
 	);

@@ -137,6 +137,7 @@ async def launch_react_tui(
 
         _con = Console(file=sys.stderr)
         _con.print()
+        # Installing React TUI dependencies on first run (최초 실행 시 의존성 설치)
         _con.print("[bold cyan]📦  React TUI 의존성 설치 중...[/bold cyan]")
         _con.print("[dim]  (최초 실행 시 1회. 잠시 기다려주세요)[/dim]")
 

@@ -58,6 +58,8 @@ type SelectModalState = {
 	onSelect: (value: string) => void;
 } | null;
 
+// Custom: state shape for the checkbox-style multi-select modal (e.g. auth method picker).
+// (체크박스 스타일 멀티셀렉트 모달 상태 — 인증 방법 선택 등에서 사용)
 type MultiSelectModalState = {
 	title: string;
 	options: MultiSelectOption[];
@@ -258,6 +260,8 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		}
 
 		// --- Multi-select modal (checkbox picker) ---
+		// Custom keyboard handler: ↑↓ navigate, space toggle, enter confirm (only if ≥1 checked), esc cancel.
+		// (↑↓ 탐색, space 체크 토글, enter 확인(1개 이상 체크 시), esc 취소)
 		if (multiSelectModal) {
 			if (key.upArrow) {
 				setMultiSelectIndex((i) => Math.max(0, i - 1));
@@ -506,7 +510,9 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				/>
 			) : null}
 
-			{/* OAuth countdown */}
+			{/* OAuth countdown — Custom: shown while the user completes browser-based Hanplanet login.
+			    Driven by session.oauthPending populated from the 'oauth_pending' backend event.
+			    (Hanplanet 브라우저 로그인 대기 중에 표시되는 카운트다운 배너 — 'oauth_pending' 이벤트로 구동) */}
 			{session.oauthPending ? (
 				<OAuthCountdown message={session.oauthPending.message} endsAt={session.oauthPending.endsAt} />
 			) : null}

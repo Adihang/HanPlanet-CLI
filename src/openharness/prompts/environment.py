@@ -74,6 +74,8 @@ def detect_git_info(cwd: str) -> tuple[bool, str | None]:
             ["git", "rev-parse", "--is-inside-work-tree"],
             capture_output=True,
             text=True,
+            # Explicit UTF-8 encoding prevents UnicodeDecodeError on non-ASCII repo paths (Windows/CJK).
+            # (비ASCII 경로(한국어 등)에서 UnicodeDecodeError 방지를 위해 UTF-8 명시)
             encoding="utf-8",
             errors="replace",
             cwd=cwd,
@@ -92,6 +94,8 @@ def detect_git_info(cwd: str) -> tuple[bool, str | None]:
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
             capture_output=True,
             text=True,
+            # Same UTF-8 + replace guard as above for consistent cross-platform handling.
+            # (위와 동일한 이유로 UTF-8 명시 — 플랫폼별 인코딩 불일치 방지)
             encoding="utf-8",
             errors="replace",
             cwd=cwd,

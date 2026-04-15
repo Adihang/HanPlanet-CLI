@@ -492,6 +492,8 @@ async def run_query(
                     final_message = event.message
                     usage = event.usage
         except Exception as exc:
+            # str(exc) can be empty for some SDK exceptions — fall back to repr() to surface details.
+            # (일부 SDK 예외는 str()이 빈 문자열일 수 있으므로 repr()로 폴백하여 오류 내용을 노출)
             error_msg = str(exc).strip() or repr(exc)
             if not reactive_compact_attempted and _is_prompt_too_long_error(exc):
                 reactive_compact_attempted = True

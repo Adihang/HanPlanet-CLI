@@ -428,8 +428,10 @@ class OpenAICompatibleClient:
         status = getattr(exc, "status_code", None)
         msg = str(exc)
 
-        # OpenAI SDK 예외는 str()이 빈 문자열일 수 있음 (빈 body, null message 등)
-        # → body / response / repr 등에서 더 유용한 정보를 추출
+        # The OpenAI SDK can produce exceptions where str() returns an empty
+        # string (empty body, null message, etc.). Fall back through body →
+        # response text → repr to surface something actionable.
+        # (OpenAI SDK 예외는 str()이 빈 문자열일 수 있음 → body/response/repr 순으로 추출)
         if not msg.strip():
             body = getattr(exc, "body", None)
             if isinstance(body, dict):
@@ -446,10 +448,12 @@ class OpenAICompatibleClient:
                     except Exception:
                         pass
             if not msg:
-                # 최후 수단: repr로 예외 타입이라도 보여줌
+                # Last resort: at least show the exception type via repr
+                # (최후 수단: repr로 예외 타입이라도 표시)
                 msg = repr(exc)
 
-        # HTTP status가 있으면 앞에 붙여 어떤 오류인지 명확히
+        # Prefix with the HTTP status code so the error message is unambiguous
+        # (HTTP status가 있으면 앞에 붙여 어떤 오류인지 명확히)
         if status and not msg.startswith(str(status)):
             msg = f"HTTP {status}: {msg}"
 

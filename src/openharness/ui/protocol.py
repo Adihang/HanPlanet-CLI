@@ -83,6 +83,10 @@ class BackendEvent(BaseModel):
         "plan_mode_change",
         "swarm_status",
         "error",
+        # Custom event types for the Hanplanet OAuth browser-login flow and general info banners.
+        # 'info' → show a system-level status message without treating it as an error.
+        # 'oauth_pending' → display a countdown banner while the user completes browser auth.
+        # (Hanplanet OAuth 흐름 전용 이벤트 타입. info=상태 메시지, oauth_pending=브라우저 인증 대기 카운트다운)
         "info",
         "oauth_pending",
         "shutdown",
@@ -94,6 +98,10 @@ class BackendEvent(BaseModel):
     tasks: list[TaskSnapshot] | None = None
     mcp_servers: list[dict[str, Any]] | None = None
     bridge_sessions: list[dict[str, Any]] | None = None
+    # Custom: changed from list[str] to list[{name, description}] so the command picker
+    # can display inline descriptions next to each slash command.
+    # (슬래시 커맨드 목록을 이름만 있는 문자열 배열 대신 {name, description} 딕셔너리 배열로 변경
+    #  — 커맨드 피커에서 설명을 함께 표시하기 위함)
     commands: list[dict[str, str]] | None = None
     modal: dict[str, Any] | None = None
     tool_name: str | None = None
@@ -108,6 +116,8 @@ class BackendEvent(BaseModel):
     # New fields for enhanced events
     todo_markdown: str | None = None
     plan_mode: str | None = None
+    # Custom: seconds until the OAuth browser session expires; drives the OAuthCountdown component.
+    # (OAuth 브라우저 세션 만료까지 남은 초 — 프론트엔드 OAuthCountdown 카운트다운 컴포넌트에서 사용)
     timeout_seconds: int | None = None
     swarm_teammates: list[dict[str, Any]] | None = None
     swarm_notifications: list[dict[str, Any]] | None = None

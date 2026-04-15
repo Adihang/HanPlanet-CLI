@@ -29,7 +29,8 @@ export function Spinner({label}: {label?: string}): React.JSX.Element {
 
 	const verb = label ?? `${VERBS[verbIndex]}...`;
 
-	// Accent 테마(ASCII 전용)에서는 braille 글자 대신 ink-spinner의 'line' 스피너 사용
+	// Use ink-spinner's 'line' type in ASCII-only (Accent) themes instead of braille dots
+	// (Accent 테마(ASCII 전용)에서는 braille 글자 대신 ink-spinner의 'line' 스피너 사용)
 	const spinnerType = theme.icons.spinner.length <= 4 ? 'line' : 'dots';
 
 	return (

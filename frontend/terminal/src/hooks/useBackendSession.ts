@@ -401,11 +401,13 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			setBusyLabel(undefined);
 			return;
 		}
+		// Custom: 'info' event — show as a system message and clear any OAuth banner
 		if (event.type === 'info') {
 			setOauthPending(null);
 			setTranscript((items) => [...items, {role: 'system', text: event.message ?? ''}]);
 			return;
 		}
+		// Custom: 'oauth_pending' event — display a countdown banner while the user authenticates
 		if (event.type === 'oauth_pending') {
 			const secs = event.timeout_seconds ?? 120;
 			setOauthPending({message: event.message ?? '', endsAt: Date.now() + secs * 1000});

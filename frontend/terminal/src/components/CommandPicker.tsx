@@ -1,6 +1,9 @@
 import React from 'react';
 import {Box, Text} from 'ink';
 
+// Custom: CommandInfo replaces plain string hints so each command can carry a description.
+// The picker renders the name on the left and the description dimmed on the right.
+// (CommandInfo 타입으로 변경하여 슬래시 커맨드 이름 옆에 설명을 함께 표시)
 import type {CommandInfo} from '../types.js';
 
 function CommandPickerInner({
