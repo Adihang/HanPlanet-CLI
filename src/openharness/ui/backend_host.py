@@ -367,6 +367,11 @@ class ReactBackendHost:
                 return True
             # "list" falls through to _build_select_command_line
 
+        # /provider __custom_add__ → 커스텀 API 추가 플로우
+        if command == "provider" and selected == "__custom_add__":
+            await self._custom_provider_add_flow()
+            return True
+
         # /provider hanplanet → always show auth method picker (allows re-auth / account switch)
         if command == "provider" and selected == "hanplanet":
             options = [
@@ -520,18 +525,51 @@ class ReactBackendHost:
         current_model = settings.model
 
         if command == "provider":
-            _VISIBLE_PROFILES = {"ollama", "hanplanet"}
+            from openharness.config.settings import builtin_provider_profile_names
             statuses = AuthManager(settings).get_profile_statuses()
-            options = [
-                {
+            builtin_names = builtin_provider_profile_names()
+
+            # 설정됨/활성 우선, 그 다음 기본 내장, 마지막에 미설정 내장
+            def _sort_key(item: tuple) -> tuple:
+                name, info = item
+                if info["active"]:
+                    return (0, name)
+                if info["configured"]:
+                    return (1, name)
+                if name not in builtin_names:
+                    return (2, name)   # 사용자 추가 커스텀
+                return (3, name)
+
+            PROVIDER_EMOJI = {
+                "hanplanet": "🏔", "ollama": "🦙",
+                "claude-api": "🟣", "claude-subscription": "🟣",
+                "openai-compatible": "🟢", "codex": "🟢", "copilot": "⚙️",
+                "moonshot": "🌙", "gemini": "🔷",
+            }
+            options = []
+            for name, info in sorted(statuses.items(), key=_sort_key):
+                emoji = PROVIDER_EMOJI.get(name, "🔌")
+                if info["configured"]:
+                    status_tag = "✓ 설정됨"
+                else:
+                    status_tag = "미설정"
+                if name == "hanplanet":
+                    desc = f"Hanplanet oauth / key  [{status_tag}]"
+                else:
+                    desc = f"{info['provider']} / {info['auth_source']}  [{status_tag}]"
+                options.append({
                     "value": name,
-                    "label": info["label"],
-                    "description": ("Hanplanet / Hanplanet oauth, key" if name == "hanplanet" else f"{info['provider']} / {info['auth_source']}") + (" [missing auth]" if not info["configured"] else ""),
+                    "label": f"{emoji}  {info['label']}",
+                    "description": desc,
                     "active": info["active"],
-                }
-                for name, info in statuses.items()
-                if name in _VISIBLE_PROFILES or info["active"]
-            ]
+                })
+            # 커스텀 API 추가 옵션
+            options.append({
+                "value": "__custom_add__",
+                "label": "➕  커스텀 API 추가",
+                "description": "OpenAI-compatible URL + API 키로 직접 등록",
+                "active": False,
+            })
             await self._emit(
                 BackendEvent(
                     type="select_request",
@@ -1261,6 +1299,104 @@ class ReactBackendHost:
             ]
 
         return []
+
+    # ── 커스텀 프로바이더 추가 ─────────────────────────────────────────────────
+
+    async def _custom_provider_add_flow(self) -> None:
+        """커스텀 OpenAI-compatible API 프로바이더를 대화형으로 추가한다."""
+        try:
+            await self._custom_provider_add_flow_inner()
+        except Exception as exc:
+            await self._emit(BackendEvent(type="error", message=f"커스텀 프로바이더 추가 실패: {exc}"))
+            await self._emit(BackendEvent(type="line_complete"))
+
+    async def _custom_provider_add_flow_inner(self) -> None:
+        import re
+        from urllib.parse import urlsplit
+
+        from openharness.auth.manager import AuthManager
+        from openharness.api.provider import detect_provider, auth_status
+        from openharness.config.settings import ProviderProfile, load_settings
+
+        # ① Base URL
+        base_url_raw = await self._ask_question(
+            "Base URL을 입력하세요\n예) https://api.openai.com/v1  |  http://localhost:11434/v1"
+        )
+        if not base_url_raw or not base_url_raw.strip():
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+        base_url = base_url_raw.strip().rstrip("/")
+
+        # ② API Key (없으면 빈 값 허용 — Ollama 등)
+        api_key_raw = await self._ask_question(
+            "API 키를 입력하세요 (키가 없으면 Enter로 건너뜀):"
+        )
+        api_key = (api_key_raw or "").strip()
+
+        # ③ 기본 모델명
+        model_raw = await self._ask_question(
+            "기본 모델명을 입력하세요\n예) gpt-4o  |  llama3.3:70b  |  gemini-2.5-flash"
+        )
+        if not model_raw or not model_raw.strip():
+            await self._emit(BackendEvent(type="line_complete"))
+            return
+        model_name = model_raw.strip()
+
+        # ④ 프로파일 이름 (자동 제안 → 사용자 확인)
+        parsed = urlsplit(base_url)
+        auto_name = re.sub(r"[^a-z0-9\-]", "-", parsed.netloc.split(":")[0].lower()).strip("-") or "custom-api"
+        name_raw = await self._ask_question(
+            f"프로파일 이름을 입력하세요 (비워두면 '{auto_name}' 사용):"
+        )
+        profile_name = re.sub(r"[^a-zA-Z0-9\-_]", "-", (name_raw or "").strip()).strip("-") or auto_name
+
+        # ⑤ 표시 레이블
+        label_raw = await self._ask_question(
+            f"표시 이름을 입력하세요 (비워두면 '{profile_name}' 사용):"
+        )
+        label = (label_raw or "").strip() or profile_name
+
+        # 프로파일 생성 & 저장
+        settings = load_settings()
+        manager = AuthManager(settings)
+        profile = ProviderProfile(
+            label=label,
+            provider="openai",
+            api_format="openai",
+            auth_source="openai_api_key",
+            default_model=model_name,
+            base_url=base_url,
+            credential_slot=profile_name,
+        )
+        manager.upsert_profile(profile_name, profile)
+        if api_key:
+            manager.store_profile_credential(profile_name, "api_key", api_key)
+        manager.use_profile(profile_name)
+
+        # 런타임 상태 갱신
+        updated_settings = load_settings()
+        assert self._bundle is not None
+        _, active_profile = updated_settings.resolve_profile()
+        self._bundle.app_state.set(
+            model=model_name,
+            provider=detect_provider(updated_settings).name,
+            auth_status=auth_status(updated_settings),
+            base_url=base_url,
+        )
+        if self._bundle.engine is not None:
+            self._bundle.engine.set_model(model_name)
+
+        await self._emit(BackendEvent(
+            type="info",
+            message=(
+                f"✅ 커스텀 프로바이더 '{profile_name}' 추가 완료!\n"
+                f"  URL   : {base_url}\n"
+                f"  모델  : {model_name}\n"
+                f"  키    : {'등록됨' if api_key else '없음 (로컬 서버용)'}\n"
+                "설정을 변경하려면 /provider 에서 다시 선택하세요."
+            ),
+        ))
+        await self._emit(BackendEvent(type="line_complete"))
 
     # ── Hanplanet auth flows ────────────────────────────────────────────────
 
