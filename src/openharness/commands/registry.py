@@ -1724,6 +1724,58 @@ def create_default_command_registry(
             )
         )
 
+    async def _update_handler(_: str, context: CommandContext) -> CommandResult:
+        """git pull로 최신 소스를 받아 HanHarness를 업데이트한다."""
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        # editable 설치 시 소스 위치: src/openharness/ → repo root
+        try:
+            import openharness as _oh_pkg
+            repo_root = Path(_oh_pkg.__file__).parents[2]
+        except Exception:
+            repo_root = Path(context.cwd)
+
+        if not (repo_root / ".git").exists():
+            return CommandResult(
+                message=(
+                    "⚠️  Git 저장소를 찾을 수 없습니다.\n"
+                    "editable 설치(pipx install -e .) 환경에서만 /update를 사용할 수 있습니다.\n"
+                    f"  감지된 경로: {repo_root}"
+                )
+            )
+
+        # git pull
+        try:
+            result = subprocess.run(
+                ["git", "pull", "origin", "main"],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except FileNotFoundError:
+            return CommandResult(message="❌ git 명령어를 찾을 수 없습니다. git이 설치되어 있는지 확인하세요.")
+        except subprocess.TimeoutExpired:
+            return CommandResult(message="❌ git pull 시간 초과 (60초). 네트워크 상태를 확인하세요.")
+
+        output = (result.stdout + result.stderr).strip()
+
+        if result.returncode != 0:
+            return CommandResult(message=f"❌ 업데이트 실패:\n```\n{output}\n```")
+
+        if "Already up to date" in output:
+            return CommandResult(message=f"✅ 이미 최신 버전입니다.\n```\n{output}\n```")
+
+        return CommandResult(
+            message=(
+                f"✅ 업데이트 완료! 변경사항을 적용하려면 프로그램을 재시작하세요.\n"
+                f"  (ctrl+c 후 다시 실행)\n\n"
+                f"```\n{output}\n```"
+            )
+        )
+
     async def _diff_handler(args: str, context: CommandContext) -> CommandResult:
         if args.strip() == "full":
             ok, output = _run_git_command(context.cwd, "diff", "HEAD")
@@ -1896,6 +1948,7 @@ def create_default_command_registry(
     registry.register(SlashCommand("rate-limit-options", "Show ways to reduce provider rate pressure", _rate_limit_options_handler))
     registry.register(SlashCommand("release-notes", "Show recent OpenHarness release notes", _release_notes_handler))
     registry.register(SlashCommand("upgrade", "Show upgrade instructions", _upgrade_handler))
+    registry.register(SlashCommand("update", "Pull latest changes from git and update HanHarness", _update_handler))
     registry.register(SlashCommand("agents", "List or inspect agent and teammate tasks", _agents_handler))
     registry.register(SlashCommand("subagents", "Show subagent usage and inspect worker tasks", _agents_handler))
     registry.register(SlashCommand("tasks", "Manage background tasks", _tasks_handler))
