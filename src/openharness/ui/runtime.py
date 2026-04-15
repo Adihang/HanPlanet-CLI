@@ -117,17 +117,14 @@ class RuntimeBundle:
 def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
     """Build the appropriate API client for the resolved settings."""
 
+    class _AuthMissing(Exception):
+        pass
+
     def _safe_resolve_auth():
         try:
             return settings.resolve_auth()
         except (ValueError, Exception):
-            print(
-                "Error: No API key configured.\n"
-                "  Run `oh auth login` to set up authentication, or set the\n"
-                "  ANTHROPIC_API_KEY (or OPENAI_API_KEY) environment variable.",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
+            raise _AuthMissing()
 
     if settings.api_format == "copilot":
         from openharness.api.copilot_client import COPILOT_DEFAULT_MODEL
@@ -138,31 +135,40 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
             else settings.model
         )
         return CopilotClient(model=copilot_model)
-    if settings.provider == "openai_codex":
+    try:
+        if settings.provider == "openai_codex":
+            auth = _safe_resolve_auth()
+            return CodexApiClient(
+                auth_token=auth.value,
+                base_url=settings.base_url,
+            )
+        if settings.provider == "anthropic_claude":
+            return AnthropicApiClient(
+                auth_token=_safe_resolve_auth().value,
+                base_url=settings.base_url,
+                claude_oauth=True,
+                auth_token_resolver=lambda: settings.resolve_auth().value,
+            )
+        if settings.api_format == "openai":
+            auth = _safe_resolve_auth()
+            return OpenAICompatibleClient(
+                api_key=auth.value,
+                base_url=settings.base_url,
+                timeout=settings.timeout,
+            )
         auth = _safe_resolve_auth()
-        return CodexApiClient(
-            auth_token=auth.value,
-            base_url=settings.base_url,
-        )
-    if settings.provider == "anthropic_claude":
         return AnthropicApiClient(
-            auth_token=_safe_resolve_auth().value,
-            base_url=settings.base_url,
-            claude_oauth=True,
-            auth_token_resolver=lambda: settings.resolve_auth().value,
-        )
-    if settings.api_format == "openai":
-        auth = _safe_resolve_auth()
-        return OpenAICompatibleClient(
             api_key=auth.value,
             base_url=settings.base_url,
-            timeout=settings.timeout,
         )
-    auth = _safe_resolve_auth()
-    return AnthropicApiClient(
-        api_key=auth.value,
-        base_url=settings.base_url,
-    )
+    except _AuthMissing:
+        # 인증 미설정 — 더미 클라이언트로 런타임을 시작하고
+        # backend_host가 ready 후 provider picker를 자동으로 연다.
+        return OpenAICompatibleClient(
+            api_key="__no_auth__",
+            base_url="http://localhost",
+            timeout=30,
+        )
 
 
 async def build_runtime(

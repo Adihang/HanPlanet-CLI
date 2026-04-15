@@ -112,6 +112,11 @@ class ReactBackendHost:
         )
         await self._emit(self._status_snapshot())
 
+        # 인증이 설정되지 않은 경우 provider picker 자동 실행
+        from openharness.api.provider import auth_status as _auth_status
+        if _auth_status(self._bundle.current_settings()).startswith("missing"):
+            await self._handle_select_command("provider")
+
         reader = asyncio.create_task(self._read_requests())
         try:
             while self._running:
