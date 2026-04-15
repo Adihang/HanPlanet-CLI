@@ -1724,11 +1724,13 @@ def create_default_command_registry(
             )
         )
 
-    async def _update_handler(_: str, context: CommandContext) -> CommandResult:
+    async def _update_handler(args: str, context: CommandContext) -> CommandResult:
         """git pull로 최신 소스를 받아 HanHarness를 업데이트한다."""
         import subprocess
         import sys
         from pathlib import Path
+
+        force = args.strip().lower() == "force"
 
         # editable 설치 시 소스 위치: src/openharness/ → repo root
         try:
@@ -1743,6 +1745,25 @@ def create_default_command_registry(
                     "⚠️  Git 저장소를 찾을 수 없습니다.\n"
                     "editable 설치(pipx install -e .) 환경에서만 /update를 사용할 수 있습니다.\n"
                     f"  감지된 경로: {repo_root}"
+                )
+            )
+
+        def _pip_install() -> str:
+            """현재 인터프리터로 editable 재설치 (의존성 반영)."""
+            r = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-e", str(repo_root), "--quiet"],
+                capture_output=True, text=True, timeout=120,
+            )
+            return (r.stdout + r.stderr).strip()
+
+        # 강제 재설치 모드
+        if force:
+            pip_out = _pip_install()
+            return CommandResult(
+                message=(
+                    "✅ 강제 재설치 완료! 변경사항 적용을 위해 프로그램을 재시작하세요.\n"
+                    "  (ctrl+c 후 다시 실행)\n"
+                    + (f"\n```\n{pip_out}\n```" if pip_out else "")
                 )
             )
 
@@ -1766,13 +1787,23 @@ def create_default_command_registry(
             return CommandResult(message=f"❌ 업데이트 실패:\n```\n{output}\n```")
 
         if "Already up to date" in output:
-            return CommandResult(message=f"✅ 이미 최신 버전입니다.\n```\n{output}\n```")
+            return CommandResult(
+                message=(
+                    "✅ 이미 최신 소스입니다.\n\n"
+                    "새 패키지 의존성 반영 또는 강제 재설치가 필요하면:\n"
+                    "  `/update force` 를 입력하세요.\n\n"
+                    f"```\n{output}\n```"
+                )
+            )
 
+        # 변경사항 있음 → pip 재설치 (새 의존성 반영)
+        pip_out = _pip_install()
         return CommandResult(
             message=(
-                f"✅ 업데이트 완료! 변경사항을 적용하려면 프로그램을 재시작하세요.\n"
-                f"  (ctrl+c 후 다시 실행)\n\n"
+                "✅ 업데이트 완료! 변경사항 적용을 위해 프로그램을 재시작하세요.\n"
+                "  (ctrl+c 후 다시 실행)\n\n"
                 f"```\n{output}\n```"
+                + (f"\n\n패키지 재설치:\n```\n{pip_out}\n```" if pip_out else "")
             )
         )
 
