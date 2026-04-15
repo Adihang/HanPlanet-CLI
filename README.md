@@ -321,3 +321,360 @@ git add src/openharness/prompts/system_prompt.py pyproject.toml
 ```
 
 `backend_host.py`는 원본 로직도 포함되어 있으므로 파일 전체를 `--ours`로 처리하지 말고 **충돌 구간을 직접 확인하며 병합**한다
+
+---
+
+## 내부 구조
+
+### 디렉토리 전체 구성
+
+```
+HanHarness/
+├── src/openharness/          # 메인 Python 패키지
+│   ├── api/                  # LLM 프로바이더 클라이언트
+│   ├── auth/                 # 인증 및 크리덴셜 관리
+│   ├── bridge/               # 서브세션 스포닝
+│   ├── channels/             # 메시지 채널 (Slack, Discord 등)
+│   ├── commands/             # 슬래시 커맨드 레지스트리 (54개+)
+│   ├── config/               # 설정 스키마 및 경로
+│   ├── coordinator/          # 멀티에이전트 코디네이터 모드
+│   ├── engine/               # 에이전트 루프 핵심
+│   ├── hooks/                # PreToolUse / PostToolUse 훅
+│   ├── keybindings/          # 키바인딩 로드 및 파싱
+│   ├── mcp/                  # Model Context Protocol 클라이언트
+│   ├── memory/               # 프로젝트 영속 메모리
+│   ├── output_styles/        # 출력 스타일 (default, codex 등)
+│   ├── permissions/          # 도구 실행 권한 체크
+│   ├── personalization/      # 사용자 선호도 추출
+│   ├── plugins/              # 플러그인 로더/인스톨러
+│   ├── prompts/              # 시스템 프롬프트 조립
+│   ├── sandbox/              # Docker 샌드박스 실행 환경
+│   ├── services/             # 크론 스케줄러, 세션 스토리지
+│   ├── skills/               # .md 기반 온디맨드 지식 로더
+│   ├── state/                # 런타임 앱 상태
+│   ├── swarm/                # 멀티에이전트 팀 스포닝
+│   ├── tasks/                # 백그라운드 태스크 관리
+│   ├── themes/               # TUI 테마 정의
+│   ├── tools/                # 44개+ 도구 구현
+│   ├── ui/                   # React TUI 연동 및 백엔드 호스트
+│   ├── utils/                # 파일락, 네트워크 가드 등 유틸
+│   ├── vim/                  # Vim 모달 입력 모드
+│   ├── voice/                # 음성 입력 (STT)
+│   ├── cli.py                # `oh` / `hanplanet` CLI 진입점
+│   └── __main__.py           # `python -m openharness` 진입점
+├── ohmo/                     # 개인 에이전트 CLI (ohmo)
+│   ├── gateway/              # 멀티채널 게이트웨이
+│   ├── cli.py                # `ohmo` CLI 진입점
+│   ├── runtime.py            # 세션 실행
+│   └── workspace.py          # ohmo 워크스페이스 구조
+├── frontend/terminal/        # React + Ink TUI 프론트엔드
+│   └── src/
+│       ├── components/       # UI 컴포넌트 (17개)
+│       ├── hooks/            # useBackendSession 훅
+│       ├── theme/            # 테마 컨텍스트
+│       ├── App.tsx           # 최상위 앱 컴포넌트
+│       ├── index.tsx         # TUI 진입점
+│       └── types.ts          # TypeScript 타입 정의
+└── tests/                    # 테스트 스위트 (37개 모듈)
+```
+
+---
+
+### 동작 방식 — 요청 흐름
+
+```
+사용자 입력 (터미널)
+    ↓
+CLI 진입점 (openharness/cli.py)
+    ↓
+React TUI 서브프로세스 기동 (frontend/terminal/src/index.tsx)
+    │
+    ├── Python 백엔드 (ui/backend_host.py)
+    │       ↓  stdin/stdout JSON 프로토콜 (OHJSON:)
+    │
+    └── React 프론트엔드 (App.tsx)
+            │
+            ├── 사용자 입력 처리 (useInput 훅)
+            ├── 메시지 전송 → Python 백엔드
+            └── 이벤트 수신 → UI 업데이트
+
+Python 백엔드 내부 흐름:
+    사용자 입력 수신
+        ↓
+    슬래시 커맨드 여부 확인 (commands/registry.py)
+        ↓ (일반 텍스트면)
+    QueryEngine.run() (engine/query_engine.py)
+        ↓
+    쿼리 루프 (engine/query.py)
+        ├── LLM API 스트리밍 호출 (api/)
+        ├── 도구 호출 파싱
+        ├── PreToolUse 훅 실행 (hooks/)
+        ├── 권한 체크 (permissions/)
+        ├── 도구 실행 (tools/)
+        ├── PostToolUse 훅 실행 (hooks/)
+        └── 결과를 LLM에 다시 피드 → 반복
+        ↓
+    응답 이벤트 emit → React 프론트엔드
+```
+
+---
+
+### 핵심 서브시스템 상세
+
+#### `engine/` — 에이전트 루프
+
+| 파일 | 용도 |
+|------|------|
+| `query_engine.py` | `QueryEngine` — 대화 히스토리 소유, LLM 클라이언트 관리, 비용 추적 |
+| `query.py` | 핵심 스트리밍 루프 — 도구 호출 처리, 훅 실행, 컨텍스트 컴팩션 |
+| `messages.py` | `ConversationMessage`, `TextBlock`, `ToolUseBlock`, `ToolResultBlock`, `ImageBlock` — 대화 구조 모델 |
+| `stream_events.py` | `AssistantTextDelta`, `ToolExecutionStarted/Completed`, `AssistantTurnComplete` — UI에 전달되는 스트림 이벤트 |
+| `cost_tracker.py` | 입력/출력 토큰 집계 및 비용 계산 |
+
+---
+
+#### `tools/` — 도구 구현 (44개+)
+
+모든 도구는 `BaseTool`을 상속하고 `async execute()`를 구현.
+
+| 카테고리 | 도구 |
+|----------|------|
+| **파일 I/O** | `FileRead`, `FileWrite`, `FileEdit`, `NotebookEdit` |
+| **검색** | `Glob`, `Grep`, `ToolSearch` |
+| **셸** | `Bash`, `Sleep` |
+| **웹** | `WebFetch`, `WebSearch` |
+| **워크스페이스** | `EnterWorktree`, `ExitWorktree`, `EnterPlanMode`, `ExitPlanMode` |
+| **태스크/크론** | `TaskCreate/Get/List/Stop/Output/Update`, `CronCreate/List/Delete/Toggle` |
+| **MCP** | `McpAuth`, `ListMcpResources`, `ReadMcpResource`, `McpToolAdapter` |
+| **멀티에이전트** | `Agent` (서브에이전트 스포닝), `TeamCreate`, `TeamDelete` |
+| **스킬/사용자** | `Skill` (스킬 로드), `AskUserQuestion`, `SendMessage` |
+| **원격** | `RemoteTrigger`, `Lsp` |
+
+`tools/base.py` 핵심 클래스:
+- `BaseTool` — 추상 기반, `async execute()` 구현 필수
+- `ToolRegistry` — 이름 → 인스턴스 맵, LLM API 스키마 생성
+- `ToolExecutionContext` — 실행 중 공유 상태 (cwd, 메타데이터)
+- `ToolResult` — 정규화 출력 (텍스트, 오류 여부, 메타데이터)
+
+---
+
+#### `api/` — LLM 프로바이더 클라이언트
+
+`SupportsStreamingMessages` 프로토콜을 구현하는 클라이언트들.
+
+| 파일 | 용도 |
+|------|------|
+| `client.py` | `ApiMessageRequest`, `ApiStreamEvent` — 공통 인터페이스 |
+| `openai_client.py` | OpenAI-호환 클라이언트 (Ollama, DashScope, Hanplanet 등 포함) |
+| `copilot_client.py` | GitHub Copilot 클라이언트 |
+| `codex_client.py` | Codex CLI 브릿지 클라이언트 |
+| `errors.py` | `AuthenticationFailure`, `RateLimitFailure`, `RequestFailure` |
+| `usage.py` | `UsageSnapshot` — 토큰 사용량 스냅샷 |
+
+---
+
+#### `ui/` — TUI 백엔드 호스트
+
+| 파일 | 용도 |
+|------|------|
+| `backend_host.py` | **핵심** — stdin/stdout JSON 프로토콜 서버, 모든 이벤트 emit, Hanplanet 커스텀 로직 |
+| `protocol.py` | `BackendEvent`, `FrontendRequest`, `TranscriptItem` — 통신 스키마 |
+| `runtime.py` | React TUI 서브프로세스 기동 및 라이프사이클 관리 |
+| `textual_app.py` | Textual 기반 폴백 TUI (React 없을 때) |
+
+**프로토콜:** Python 백엔드는 stdout에 `OHJSON:{...}\n` 형식으로 이벤트를 내보내고, React 프론트엔드는 stdin으로 JSON 요청을 전송.
+
+주요 이벤트 타입:
+
+| 이벤트 | 방향 | 의미 |
+|--------|------|------|
+| `ready` | B→F | 백엔드 초기화 완료 |
+| `assistant_delta` | B→F | LLM 텍스트 스트리밍 |
+| `assistant_complete` | B→F | LLM 응답 완료 |
+| `tool_started` | B→F | 도구 실행 시작 |
+| `tool_completed` | B→F | 도구 실행 완료 |
+| `line_complete` | B→F | 턴 종료, 스피너 해제 |
+| `select_request` | B→F | 선택 모달 요청 |
+| `modal_request` | B→F | 권한/질문 모달 요청 |
+| `submit_line` | F→B | 사용자 입력 전송 |
+| `apply_select_command` | F→B | 선택 모달 결과 전송 |
+| `permission_response` | F→B | 권한 응답 |
+
+---
+
+#### `commands/` — 슬래시 커맨드 (registry.py)
+
+54개+ 커맨드를 `SlashCommand` + 비동기 핸들러로 등록.
+
+```python
+# 패턴
+async def _my_handler(args: str, context: CommandContext) -> CommandResult:
+    return CommandResult(message="결과 텍스트")
+
+registry.register(SlashCommand("my-cmd", "설명", _my_handler))
+```
+
+| 커맨드 그룹 | 예시 |
+|-------------|------|
+| 세션 관리 | `/clear`, `/rewind`, `/resume`, `/session` |
+| 모델/프로바이더 | `/model`, `/provider`, `/effort`, `/passes`, `/fast` |
+| 설정 | `/config`, `/theme`, `/permissions`, `/language` |
+| 메모리/스킬 | `/memory`, `/skills` |
+| 태스크/에이전트 | `/tasks`, `/agents` |
+| 도구/컨텍스트 | `/context`, `/status`, `/cost`, `/stats` |
+
+---
+
+#### `permissions/` — 권한 체크
+
+| 파일 | 용도 |
+|------|------|
+| `checker.py` | `PermissionChecker.evaluate()` — 모드+규칙 기반 판단 |
+| `modes.py` | `DEFAULT`(확인), `AUTO`(자동 허용), `PLAN`(쓰기 차단) |
+
+민감 경로 하드코딩 차단 목록: SSH 키, AWS 크리덴셜, kubeconfig 등.
+
+---
+
+#### `hooks/` — 라이프사이클 훅
+
+| 파일 | 용도 |
+|------|------|
+| `executor.py` | `HookExecutor` — command/HTTP/prompt/agent 훅 실행 |
+| `loader.py` | `HookRegistry` — `settings.json`에서 로드, 핫리로드 지원 |
+| `events.py` | `PRE_TOOL_USE`, `POST_TOOL_USE`, `PRE_PROMPT`, `ON_SESSION_START` 등 |
+
+---
+
+#### `skills/` — 온디맨드 지식 주입
+
+`.md` 파일 기반 스킬을 시스템 프롬프트에 주입. 커스텀 `preload_skills` 설정으로 로컬 모델에서도 사용 가능.
+
+| 파일 | 용도 |
+|------|------|
+| `loader.py` | 번들/사용자/프로젝트 스킬 로드 |
+| `registry.py` | `SkillRegistry` — 이름 → `SkillDefinition` 맵 |
+| `types.py` | `SkillDefinition` — name, description, content |
+
+스킬 검색 순서: 번들 내장 → `~/.openharness/skills/` → `.openharness/skills/`
+
+---
+
+#### `memory/` — 프로젝트 영속 메모리
+
+| 파일 | 용도 |
+|------|------|
+| `manager.py` | `add/remove/list_memory_entry()` — 파일 단위 잠금 포함 |
+| `search.py` | 내용 기반 검색 (메타데이터 가중치 우선) |
+| `paths.py` | `~/.openharness/memory/<project>/` 경로 계산 |
+
+---
+
+#### `config/` — 설정
+
+| 파일 | 용도 |
+|------|------|
+| `settings.py` | `Settings` (880줄+ Pydantic) — 모든 런타임 설정의 단일 진실 소스 |
+| `paths.py` | `~/.openharness/`, `.openharness/` 경로 해결 |
+
+설정 해결 우선순위: CLI 인자 > 환경변수 > `settings.json` > 기본값
+
+---
+
+#### `swarm/` + `coordinator/` — 멀티에이전트
+
+| 파일 | 용도 |
+|------|------|
+| `swarm/types.py` | `BackendType` — subprocess / in_process / tmux / iTerm2 |
+| `swarm/team_lifecycle.py` | 팀 생성, 코디네이션, 해제 |
+| `swarm/mailbox.py` | 에이전트 간 메시지 전달 |
+| `coordinator/coordinator_mode.py` | `TeamRegistry` — 팀 및 에이전트 상태 추적 |
+
+---
+
+### 프론트엔드 구조 (frontend/terminal/src/)
+
+#### 주요 컴포넌트
+
+| 컴포넌트 | 용도 |
+|----------|------|
+| `App.tsx` | 최상위 — 입력 처리, 모달 관리, 커맨드 피커 |
+| `ConversationView.tsx` | 대화 히스토리 스크롤 뷰 |
+| `PromptInput.tsx` | 사용자 입력창 + 스피너 |
+| `Spinner.tsx` | `ink-spinner` 기반 로딩 인디케이터, 커스텀 VERBS |
+| `CommandPicker.tsx` | `/` 입력 시 나타나는 커맨드 선택 드롭다운 |
+| `SelectModal.tsx` | ↑↓ 선택 모달 (모델, 프로바이더, 세션 등) |
+| `ModalHost.tsx` | 권한 확인, 질문 모달 |
+| `StatusBar.tsx` | 하단 상태바 (모델, 모드, 토큰, 태스크 수) |
+| `TodoPanel.tsx` | 투두 목록 표시, Ctrl+T 토글 |
+| `SwarmPanel.tsx` | 멀티에이전트 팀 상태, Ctrl+W 토글 |
+| `ToolCallDisplay.tsx` | 도구 호출/결과 인라인 표시 |
+| `MarkdownText.tsx` | 마크다운 → ANSI 렌더링 |
+| `OAuthCountdown.tsx` | OAuth 타임아웃 카운트다운 |
+| `WelcomeBanner.tsx` | HANPLANET ASCII 배너 |
+
+#### `hooks/useBackendSession.ts`
+
+React ↔ Python 통신의 핵심.
+
+- Python 백엔드 서브프로세스 기동 (`spawn`)
+- stdout를 readline으로 읽어 `OHJSON:` 접두사 파싱
+- 이벤트별 상태 업데이트 (`transcript`, `tasks`, `status`, `modal` 등)
+- 스트리밍 텍스트 50ms 디바운스 플러시 (토큰 단위 리렌더 방지)
+- `sendRequest(payload)` — stdin으로 JSON 전송
+
+#### `types.ts`
+
+| 타입 | 용도 |
+|------|------|
+| `FrontendConfig` | 백엔드 커맨드, 초기 프롬프트 |
+| `TranscriptItem` | role / text / tool_name / tool_input / is_error |
+| `TaskSnapshot` | id / type / status / description / metadata |
+| `BackendEvent` | 백엔드 → 프론트엔드 이벤트 유니온 |
+| `SelectOptionPayload` | value / label / description / active |
+| `McpServerSnapshot` | MCP 서버 상태 |
+| `SwarmTeammateSnapshot` | 에이전트 팀원 상태 |
+
+---
+
+### ohmo/ — 개인 에이전트 CLI
+
+`oh`/`hanplanet`과 독립된 별도 CLI. 채팅앱 채널에서 항상 작동하는 개인 에이전트를 구성.
+
+| 파일 | 용도 |
+|------|------|
+| `cli.py` | `ohmo` 진입점 — `init`, `config`, `gateway start/stop/status` |
+| `workspace.py` | `~/.ohmo/` 워크스페이스 (`soul.md`, `user.md`, `state/`, `memory/`) |
+| `runtime.py` | TUI/백그라운드 세션 실행 |
+| `gateway/service.py` | `OhmoGatewayService` — 멀티채널 게이트웨이 오케스트레이터 |
+| `gateway/models.py` | `GatewayConfig`, `GatewayState` |
+
+지원 채널: Slack, Discord, Telegram, WhatsApp, Email, Matrix, Feishu, DingTalk, QQ
+
+---
+
+### 진입점 (pyproject.toml)
+
+```toml
+[project.scripts]
+hanplanet = "openharness.cli:app"   # 커스텀 진입점
+oh        = "openharness.cli:app"   # 원본 alias
+openh     = "openharness.cli:app"   # Windows용
+ohmo      = "ohmo.cli:app"          # 개인 에이전트
+```
+
+---
+
+### 핵심 추상화 요약
+
+| 추상화 | 위치 | 역할 |
+|--------|------|------|
+| `QueryEngine` | `engine/query_engine.py` | 대화 히스토리 + LLM 클라이언트 오케스트레이터 |
+| `BaseTool` | `tools/base.py` | 모든 도구의 기반 클래스 |
+| `ToolRegistry` | `tools/base.py` | 도구 이름 → 인스턴스 맵 |
+| `PermissionChecker` | `permissions/checker.py` | 도구 실행 전 접근 제어 판단 |
+| `HookExecutor` | `hooks/executor.py` | 라이프사이클 이벤트 실행 |
+| `SkillRegistry` | `skills/registry.py` | 온디맨드 지식 주입 |
+| `CommandRegistry` | `commands/registry.py` | 슬래시 커맨드 디스패치 |
+| `BackendEvent` | `ui/protocol.py` | 프론트↔백 통신 이벤트 스키마 |
+| `Settings` | `config/settings.py` | 모든 런타임 설정의 단일 진실 소스 |
