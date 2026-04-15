@@ -36,9 +36,10 @@ pipx ensurepath
 pipx --version
 
 pipx install -e .
+pipx upgrade HanHarness
 ```
 
-설치 후 `oh` 명령어로 실행.
+설치 후 `hanplanet` or `oh` 명령어로 실행.
 
 > **개발 중 소스 코드 직접 참조 (pipx 환경)**
 >
