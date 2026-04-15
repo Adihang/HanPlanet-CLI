@@ -77,6 +77,10 @@ def test_detect_git_info_uses_devnull_for_git_subprocess(monkeypatch):
     assert len(calls) == 2
     assert calls[0]["stdin"] is subprocess.DEVNULL
     assert calls[1]["stdin"] is subprocess.DEVNULL
+    assert calls[0]["encoding"] == "utf-8"
+    assert calls[1]["encoding"] == "utf-8"
+    assert calls[0]["errors"] == "replace"
+    assert calls[1]["errors"] == "replace"
 
 
 def test_get_environment_info_returns_dataclass():

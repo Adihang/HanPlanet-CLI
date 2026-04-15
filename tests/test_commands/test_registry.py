@@ -728,3 +728,25 @@ async def test_git_commands_report_repository_state(tmp_path: Path, monkeypatch)
     commit_command, commit_args = registry.lookup("/commit initial commit")
     commit_result = await commit_command.handler(commit_args, context)
     assert "commit" in commit_result.message.lower()
+
+
+def test_run_git_command_uses_utf8_subprocess(monkeypatch):
+    calls: list[dict[str, object]] = []
+
+    class _Completed:
+        returncode = 0
+        stdout = "main\n"
+        stderr = ""
+
+    def _fake_run(args, **kwargs):
+        calls.append({"args": args, **kwargs})
+        return _Completed()
+
+    monkeypatch.setattr("openharness.commands.registry.subprocess.run", _fake_run)
+
+    ok, output = registry_module._run_git_command("C:/tmp/project", "rev-parse", "--abbrev-ref", "HEAD")
+
+    assert ok is True
+    assert output == "main"
+    assert calls[0]["encoding"] == "utf-8"
+    assert calls[0]["errors"] == "replace"
