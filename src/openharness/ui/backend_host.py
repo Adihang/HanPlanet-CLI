@@ -773,6 +773,7 @@ class ReactBackendHost:
                     select_options=options,
                 )
             )
+            await self._emit(BackendEvent(type="line_complete"))
             return
 
         if command == "model":
@@ -887,6 +888,7 @@ class ReactBackendHost:
                     select_options=options,
                 )
             )
+            await self._emit(BackendEvent(type="line_complete"))
             return
 
         if command == "plugin":
@@ -931,6 +933,7 @@ class ReactBackendHost:
                     select_options=options,
                 )
             )
+            await self._emit(BackendEvent(type="line_complete"))
             return
 
         if command == "rewind":
@@ -993,6 +996,7 @@ class ReactBackendHost:
                     select_options=options,
                 )
             )
+            await self._emit(BackendEvent(type="line_complete"))
             return
 
         if command == "agents":
