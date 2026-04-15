@@ -19,6 +19,9 @@ git clone https://github.com/Adihang/HanHarness.git
 cd HanHarness
 
 # Python 의존성 설치
+pip install uv
+uv --version
+
 uv sync --extra dev
 
 # TUI 프론트엔드 의존성 설치
@@ -28,6 +31,10 @@ cd frontend/terminal && npm ci && cd ../..
 ### 전역 설치 (pipx)
 
 ```bash
+pip install pipx
+pipx ensurepath
+pipx --version
+
 pipx install -e .
 ```
 
