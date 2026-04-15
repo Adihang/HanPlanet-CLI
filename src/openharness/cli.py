@@ -15,7 +15,7 @@ __version__ = "0.1.6"
 
 def _version_callback(value: bool) -> None:
     if value:
-        print(f"openharness {__version__}")
+        print(f"HanHarness {__version__}")
         raise typer.Exit()
 
 

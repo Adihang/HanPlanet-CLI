@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "openharness-ai"
+name = "HanHarness"
 version = "0.1.6"
 description = "Open-source Python port of Claude Code - an AI-powered CLI coding assistant"
 readme = "README.md"

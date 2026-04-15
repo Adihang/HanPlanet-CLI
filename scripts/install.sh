@@ -24,7 +24,32 @@ info()    { echo -e "${CYAN}[INFO]${RESET}  $*"; }
 success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
-step()    { echo -e "\n${BOLD}${BLUE}==>${RESET}${BOLD} $*${RESET}"; }
+
+TOTAL_STEPS=9
+STEP_COUNT=0
+render_progress() {
+    local percent=$(( STEP_COUNT * 100 / TOTAL_STEPS ))
+    local width=20
+    local filled=$(( percent * width / 100 ))
+    local empty=$(( width - filled ))
+    local bar=""
+    local i
+
+    for ((i = 0; i < filled; i++)); do
+        bar+="#"
+    done
+    for ((i = 0; i < empty; i++)); do
+        bar+="-"
+    done
+
+    echo -e "${CYAN}[PROGRESS]${RESET} [${bar}] ${percent}% (${STEP_COUNT}/${TOTAL_STEPS})"
+}
+
+step() {
+    STEP_COUNT=$((STEP_COUNT + 1))
+    echo -e "\n${BOLD}${BLUE}==>${RESET}${BOLD} $*${RESET}"
+    render_progress
+}
 
 # ---------------------------------------------------------------------------
 # Parse arguments
@@ -57,8 +82,8 @@ done
 echo ""
 echo -e "${BOLD}${CYAN}  ██████╗ ██╗  ██╗${RESET}"
 echo -e "${BOLD}${CYAN} ██╔═══██╗██║  ██║${RESET}"
-echo -e "${BOLD}${CYAN} ██║   ██║███████║${RESET}   OpenHarness Installer"
-echo -e "${BOLD}${CYAN} ██║   ██║██╔══██║${RESET}   Open Agent Harness"
+echo -e "${BOLD}${CYAN} ██║   ██║███████║${RESET}   HanHarness Installer"
+echo -e "${BOLD}${CYAN} ██║   ██║██╔══██║${RESET}   Han Agent Harness"
 echo -e "${BOLD}${CYAN} ╚██████╔╝██║  ██║${RESET}"
 echo -e "${BOLD}${CYAN}  ╚═════╝ ╚═╝  ╚═╝${RESET}"
 echo ""
@@ -179,9 +204,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 4: Install OpenHarness
+# Step 4: Install HanHarness
 # ---------------------------------------------------------------------------
-step "Installing OpenHarness"
+step "Installing HanHarness"
 
 REPO_URL="https://github.com/HKUDS/OpenHarness.git"
 INSTALL_DIR="$HOME/.openharness-src"
@@ -214,7 +239,7 @@ if [ "$FROM_SOURCE" = true ]; then
             info "Source directory exists, pulling latest changes..."
             git -C "$INSTALL_DIR" pull --ff-only
         else
-            info "Cloning OpenHarness into ${INSTALL_DIR}..."
+            info "Cloning HanHarness into ${INSTALL_DIR}..."
             git clone "$REPO_URL" "$INSTALL_DIR"
         fi
     else
@@ -230,11 +255,11 @@ if [ "$FROM_SOURCE" = true ]; then
     info "Installing in editable mode (pip install -e .)..."
     $PIP_CMD install -e "$INSTALL_DIR" --quiet
 else
-    info "Mode: pip install openharness-ai"
-    $PIP_CMD install openharness-ai --quiet --upgrade
+    info "Mode: pip install HanHarness"
+    $PIP_CMD install HanHarness --quiet --upgrade
 fi
 
-success "OpenHarness package installed"
+success "HanHarness package installed"
 
 # ---------------------------------------------------------------------------
 # Step 5: Channel dependencies
@@ -266,9 +291,9 @@ if [ "$NODE_OK" = true ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 7: Create OpenHarness config directory
+# Step 7: Create HanHarness config directory
 # ---------------------------------------------------------------------------
-step "Setting up OpenHarness config directory"
+step "Setting up HanHarness config directory"
 
 mkdir -p "$HOME/.openharness"
 mkdir -p "$HOME/.openharness/skills"
@@ -308,7 +333,7 @@ step "Setting up shell integration"
 ACTIVATION_LINE="export PATH=\"$VENV_DIR/bin:\$PATH\""
 FISH_CONFIG="$HOME/.config/fish/config.fish"
 FISH_BLOCK=$(cat <<EOF
-# OpenHarness
+# HanHarness
 if not contains -- "$VENV_DIR/bin" \$PATH
     set -gx PATH "$VENV_DIR/bin" \$PATH
 end
@@ -328,7 +353,7 @@ append_shell_path() {
         return
     fi
     echo "" >> "$rc_file"
-    echo "# OpenHarness" >> "$rc_file"
+    echo "# HanHarness" >> "$rc_file"
     echo "$ACTIVATION_LINE" >> "$rc_file"
     success "Added $VENV_DIR/bin to PATH in $(basename "$rc_file")"
     configured_any=true
@@ -358,7 +383,7 @@ fi
 # Done
 # ---------------------------------------------------------------------------
 echo ""
-echo -e "${BOLD}${GREEN}OpenHarness is installed!${RESET}"
+echo -e "${BOLD}${GREEN}HanHarness is installed!${RESET}"
 echo ""
 echo "  Next steps:"
 echo "    1. Restart shell, or reload your shell config:"

@@ -288,10 +288,10 @@ def create_default_command_registry(
     async def _version_handler(_: str, context: CommandContext) -> CommandResult:
         del context
         try:
-            version = importlib.metadata.version("openharness")
+            version = importlib.metadata.version("HanHarness")
         except importlib.metadata.PackageNotFoundError:
             version = "0.1.6"
-        return CommandResult(message=f"OpenHarness {version}")
+        return CommandResult(message=f"HanHarness {version}")
 
     async def _context_handler(_: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1711,7 +1711,7 @@ def create_default_command_registry(
     async def _upgrade_handler(_: str, context: CommandContext) -> CommandResult:
         del context
         try:
-            version = importlib.metadata.version("openharness")
+            version = importlib.metadata.version("HanHarness")
         except importlib.metadata.PackageNotFoundError:
             version = "0.1.6"
         return CommandResult(
@@ -1826,7 +1826,7 @@ def create_default_command_registry(
     registry.register(SlashCommand("help", "Show available commands", _help_handler))
     registry.register(SlashCommand("exit", "Exit OpenHarness", _exit_handler))
     registry.register(SlashCommand("clear", "Clear conversation history", _clear_handler))
-    registry.register(SlashCommand("version", "Show the installed OpenHarness version", _version_handler))
+    registry.register(SlashCommand("version", "Show the installed HanHarness version", _version_handler))
     registry.register(SlashCommand("status", "Show session status", _status_handler))
     registry.register(SlashCommand("context", "Show the active runtime system prompt", _context_handler))
     registry.register(SlashCommand("summary", "Summarize conversation history", _summary_handler))

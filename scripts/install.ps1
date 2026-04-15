@@ -15,14 +15,26 @@ function Write-Info { Write-Host "[INFO]  $args" -ForegroundColor Cyan }
 function Write-Success { Write-Host "[OK]    $args" -ForegroundColor Green }
 function Write-Warn { Write-Host "[WARN]  $args" -ForegroundColor Yellow }
 function Write-Error { Write-Host "[ERROR] $args" -ForegroundColor Red }
-function Write-Step { Write-Host ""; Write-Host "==>$args" -ForegroundColor Blue -BackgroundColor White }
+
+$TotalSteps = 8
+$Script:StepCount = 0
+function Write-Step {
+    param([string]$Message)
+    $Script:StepCount++
+    $Percent = [int][math]::Floor(($Script:StepCount * 100) / $TotalSteps)
+    $Filled = [int][math]::Floor(($Percent * 20) / 100)
+    $Bar = ("#" * $Filled).PadRight(20, "-")
+    Write-Host ""
+    Write-Host "==>$Message" -ForegroundColor Blue -BackgroundColor White
+    Write-Host "[PROGRESS] [$Bar] $Percent% ($Script:StepCount/$TotalSteps)" -ForegroundColor Cyan
+}
 
 # ---------------------------------------------------------------------------
 # Banner
 # ---------------------------------------------------------------------------
 Write-Host ""
 Write-Host "  ==============================" -ForegroundColor Cyan
-Write-Host "    OpenHarness Installer" -ForegroundColor Cyan
+Write-Host "    HanHarness Installer" -ForegroundColor Cyan
 Write-Host "    Windows Native Setup" -ForegroundColor Cyan
 Write-Host "  ==============================" -ForegroundColor Cyan
 Write-Host ""
@@ -122,9 +134,9 @@ if ($NodePath) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 4: Install OpenHarness
+# Step 4: Install HanHarness
 # ---------------------------------------------------------------------------
-Write-Step "Installing OpenHarness"
+Write-Step "Installing HanHarness"
 
 $RepoUrl = "https://github.com/HKUDS/OpenHarness.git"
 $InstallDir = "$env:USERPROFILE\.openharness-src"
@@ -173,7 +185,7 @@ if ($FromSource) {
         git pull --ff-only
         Pop-Location
     } else {
-        Write-Info "Cloning OpenHarness into $InstallDir..."
+        Write-Info "Cloning HanHarness into $InstallDir..."
         git clone $RepoUrl $InstallDir
         if (-not (Test-Path $InstallDir)) {
             Write-Error "Failed to clone repository"
@@ -184,11 +196,11 @@ if ($FromSource) {
     Write-Info "Installing in editable mode (pip install -e .)..."
     pip install -e $InstallDir --quiet
 } else {
-    Write-Info "Mode: pip install openharness-ai"
-    pip install openharness-ai --quiet --upgrade
+    Write-Info "Mode: pip install HanHarness"
+    pip install HanHarness --quiet --upgrade
 }
 
-Write-Success "OpenHarness package installed"
+Write-Success "HanHarness package installed"
 
 # ---------------------------------------------------------------------------
 # Step 5: Install frontend/terminal npm dependencies
@@ -198,7 +210,7 @@ if ($NodeOk) {
         $FrontendDir = "$InstallDir\frontend\terminal"
     } else {
         # Find installed package location
-        $PackageInfo = pip show openharness-ai 2>&1
+        $PackageInfo = pip show HanHarness 2>&1
         $LocationMatch = $PackageInfo -match "Location: (.+)"
         if ($LocationMatch) {
             $PackageLocation = $matches[1].Trim()
@@ -221,9 +233,9 @@ if ($NodeOk) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 6: Create OpenHarness config directory
+# Step 6: Create HanHarness config directory
 # ---------------------------------------------------------------------------
-Write-Step "Setting up OpenHarness config directory"
+Write-Step "Setting up HanHarness config directory"
 
 $ConfigDir = "$env:USERPROFILE\.openharness"
 $SkillsDir = "$ConfigDir\skills"
@@ -287,7 +299,7 @@ if ((Test-Path $OpenhPath) -and (Test-Path $OhmoPath)) {
 # Done
 # ---------------------------------------------------------------------------
 Write-Host ""
-Write-Host "OpenHarness is installed!" -ForegroundColor Green -BackgroundColor White
+Write-Host "HanHarness is installed!" -ForegroundColor Green -BackgroundColor White
 Write-Host ""
 Write-Host "  Next steps:"
 Write-Host "    1. Restart terminal, or run: refreshenv (if using Chocolatey)"
