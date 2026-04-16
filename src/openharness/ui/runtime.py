@@ -169,7 +169,7 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
         return OpenAICompatibleClient(
             api_key="__no_auth__",
             base_url="http://localhost",
-            timeout=30,
+            timeout=settings.timeout,
         )
 
 
@@ -586,6 +586,11 @@ async def handle_line(
             )
         sync_app_state(bundle)
         return not result.should_exit
+
+    if line.startswith("/"):
+        command_name = line[1:].split(maxsplit=1)[0] or "<empty>"
+        await print_system(f"Unknown slash command: /{command_name}")
+        return True
 
     settings = bundle.current_settings()
     if bundle.enforce_max_turns:

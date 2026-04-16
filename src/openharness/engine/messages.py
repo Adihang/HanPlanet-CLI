@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
+INVALID_TOOL_ARGUMENTS_FIELD = "_invalid_json_arguments"
+
 
 class TextBlock(BaseModel):
     """Plain text content."""

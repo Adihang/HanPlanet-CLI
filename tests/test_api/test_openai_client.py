@@ -14,11 +14,13 @@ from openharness.api.openai_client import (
     _convert_messages_to_openai,
     _convert_tools_to_openai,
     _normalize_openai_base_url,
+    _parse_tool_arguments,
     _token_limit_param_for_model,
 )
 from openharness.engine.messages import (
     ConversationMessage,
     ImageBlock,
+    INVALID_TOOL_ARGUMENTS_FIELD,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
@@ -61,6 +63,12 @@ class TestConvertToolsToOpenai:
         assert len(result) == 2
         assert result[0]["function"]["name"] == "tool_a"
         assert result[1]["function"]["name"] == "tool_b"
+
+
+def test_parse_tool_arguments_preserves_invalid_json():
+    result = _parse_tool_arguments('{"path":')
+
+    assert result == {INVALID_TOOL_ARGUMENTS_FIELD: '{"path":'}
 
 
 class TestConvertMessagesToOpenai:

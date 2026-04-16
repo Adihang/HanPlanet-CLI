@@ -28,6 +28,7 @@ from openharness.engine.messages import (
     ConversationMessage,
     ContentBlock,
     ImageBlock,
+    INVALID_TOOL_ARGUMENTS_FIELD,
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
@@ -39,6 +40,16 @@ MAX_RETRIES = 3
 BASE_DELAY = 1.0
 MAX_DELAY = 30.0
 _MAX_COMPLETION_TOKEN_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def _parse_tool_arguments(arguments: Any) -> dict[str, Any]:
+    if not isinstance(arguments, str) or not arguments:
+        return {}
+    try:
+        loaded = json.loads(arguments)
+    except json.JSONDecodeError:
+        return {INVALID_TOOL_ARGUMENTS_FIELD: arguments[:1000]}
+    return loaded if isinstance(loaded, dict) else {INVALID_TOOL_ARGUMENTS_FIELD: arguments[:1000]}
 
 
 def _token_limit_param_for_model(model: str, max_tokens: int) -> dict[str, int]:
@@ -199,14 +210,10 @@ def _parse_assistant_response(response: Any) -> ConversationMessage:
 
     if message.tool_calls:
         for tc in message.tool_calls:
-            try:
-                args = json.loads(tc.function.arguments)
-            except (json.JSONDecodeError, TypeError):
-                args = {}
             content.append(ToolUseBlock(
                 id=tc.id,
                 name=tc.function.name,
-                input=args,
+                input=_parse_tool_arguments(tc.function.arguments),
             ))
 
     return ConversationMessage(role="assistant", content=content)
@@ -378,14 +385,10 @@ class OpenAICompatibleClient:
             # Skip phantom/empty tool calls that some providers send
             if not tc["name"]:
                 continue
-            try:
-                args = json.loads(tc["arguments"])
-            except (json.JSONDecodeError, TypeError):
-                args = {}
             content.append(ToolUseBlock(
                 id=tc["id"],
                 name=tc["name"],
-                input=args,
+                input=_parse_tool_arguments(tc["arguments"]),
             ))
 
         final_message = ConversationMessage(role="assistant", content=content)

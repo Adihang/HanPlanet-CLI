@@ -18,7 +18,14 @@ from openharness.api.client import (
 )
 from openharness.api.errors import AuthenticationFailure, OpenHarnessApiError, RateLimitFailure, RequestFailure
 from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
+from openharness.engine.messages import (
+    ConversationMessage,
+    ImageBlock,
+    INVALID_TOOL_ARGUMENTS_FIELD,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 
 DEFAULT_CODEX_BASE_URL = "https://chatgpt.com/backend-api"
 JWT_CLAIM_PATH = "https://api.openai.com/auth"
@@ -127,6 +134,16 @@ def _convert_tools_to_codex(tools: list[dict[str, Any]]) -> list[dict[str, Any]]
         }
         for tool in tools
     ]
+
+
+def _parse_tool_arguments(arguments: Any) -> dict[str, Any]:
+    if not isinstance(arguments, str) or not arguments:
+        return {}
+    try:
+        loaded = json.loads(arguments)
+    except json.JSONDecodeError:
+        return {INVALID_TOOL_ARGUMENTS_FIELD: arguments[:1000]}
+    return loaded if isinstance(loaded, dict) else {INVALID_TOOL_ARGUMENTS_FIELD: arguments[:1000]}
 
 
 def _usage_from_response(response: dict[str, Any]) -> UsageSnapshot:
@@ -292,19 +309,16 @@ class CodexApiClient:
                                 content.append(TextBlock(text=text))
                         elif item_type == "function_call":
                             arguments = item.get("arguments")
-                            parsed_arguments: dict[str, Any]
-                            if isinstance(arguments, str) and arguments:
-                                try:
-                                    loaded = json.loads(arguments)
-                                except json.JSONDecodeError:
-                                    loaded = {}
-                            else:
-                                loaded = {}
-                            parsed_arguments = loaded if isinstance(loaded, dict) else {}
                             call_id = item.get("call_id")
                             name = item.get("name")
                             if isinstance(call_id, str) and call_id and isinstance(name, str) and name:
-                                content.append(ToolUseBlock(id=call_id, name=name, input=parsed_arguments))
+                                content.append(
+                                    ToolUseBlock(
+                                        id=call_id,
+                                        name=name,
+                                        input=_parse_tool_arguments(arguments),
+                                    )
+                                )
                     elif event_type == "response.completed":
                         response_payload = event.get("response")
                         if isinstance(response_payload, dict):

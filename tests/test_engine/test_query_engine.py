@@ -11,7 +11,12 @@ from openharness.api.client import ApiMessageCompleteEvent, ApiRetryEvent, ApiTe
 from openharness.api.errors import RequestFailure
 from openharness.api.usage import UsageSnapshot
 from openharness.config.settings import PermissionSettings, Settings
-from openharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock
+from openharness.engine.messages import (
+    ConversationMessage,
+    INVALID_TOOL_ARGUMENTS_FIELD,
+    TextBlock,
+    ToolUseBlock,
+)
 from openharness.engine.query_engine import QueryEngine
 from openharness.prompts.context import build_runtime_system_prompt
 from openharness.engine.stream_events import (
@@ -59,6 +64,19 @@ class FakeApiClient:
             usage=response.usage,
             stop_reason=None,
         )
+
+
+class CapturingFakeApiClient(FakeApiClient):
+    """Fake client that records each request sent by the engine."""
+
+    def __init__(self, responses: list[_FakeResponse]) -> None:
+        super().__init__(responses)
+        self.requests = []
+
+    async def stream_message(self, request):
+        self.requests.append(request)
+        async for event in super().stream_message(request):
+            yield event
 
 
 class StaticApiClient:
@@ -243,6 +261,105 @@ async def test_query_engine_executes_tool_calls(tmp_path: Path, monkeypatch):
     assert isinstance(events[-1], AssistantTurnComplete)
     assert "alpha and beta" in events[-1].message.text
     assert len(engine.messages) == 4
+
+
+@pytest.mark.asyncio
+async def test_query_engine_reports_invalid_tool_arguments_and_injects_recovery_turn(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    api_client = CapturingFakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(
+                            id="toolu_bad_write",
+                            name="write_file",
+                            input={},
+                        )
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(
+                            id="toolu_good_write",
+                            name="write_file",
+                            input={"path": "ok.txt", "content": "ok"},
+                        )
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text="done")],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+        ]
+    )
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(
+            PermissionSettings(mode=PermissionMode.FULL_AUTO)
+        ),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("create ok.txt")]
+
+    tool_results = [event for event in events if isinstance(event, ToolExecutionCompleted)]
+    assert len(tool_results) == 2
+    assert tool_results[0].is_error is True
+    assert "Tool-call input error for write_file" in tool_results[0].output
+    assert "missing required fields: path, content" in tool_results[0].output
+    assert any(
+        isinstance(event, StatusEvent)
+        and event.message == "Recovering from invalid tool arguments..."
+        for event in events
+    )
+    assert (tmp_path / "ok.txt").read_text(encoding="utf-8") == "ok"
+    assert len(api_client.requests) == 3
+    assert any(
+        "Retry the failed tool call now with valid JSON arguments" in message.text
+        for message in api_client.requests[1].messages
+        if message.role == "user"
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_engine_reports_invalid_tool_arguments_json(tmp_path: Path):
+    context = QueryContext(
+        api_client=_NoopApiClient(),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        max_tokens=4096,
+    )
+
+    result = await _execute_tool_call(
+        context,
+        "write_file",
+        "toolu_bad_json",
+        {INVALID_TOOL_ARGUMENTS_FIELD: '{"path":'},
+    )
+
+    assert result.is_error is True
+    assert "invalid JSON arguments" in result.content
+    assert 'Raw arguments: {"path":' in result.content
 
 
 @pytest.mark.asyncio

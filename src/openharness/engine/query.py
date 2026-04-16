@@ -17,7 +17,11 @@ from openharness.api.client import (
     SupportsStreamingMessages,
 )
 from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, ToolResultBlock
+from openharness.engine.messages import (
+    ConversationMessage,
+    INVALID_TOOL_ARGUMENTS_FIELD,
+    ToolResultBlock,
+)
 from openharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
@@ -32,9 +36,12 @@ from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.base import ToolRegistry
+from pydantic import ValidationError
 
 AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
 REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memory and retrying."
+TOOL_INPUT_ERROR_PREFIX = "Tool-call input error"
+TOOL_INPUT_RECOVERY_STATUS = "Recovering from invalid tool arguments..."
 
 log = logging.getLogger(__name__)
 
@@ -588,10 +595,71 @@ async def run_query(
                 ), None
 
         messages.append(ConversationMessage(role="user", content=tool_results))
+        recovery_message = _tool_input_recovery_message(tool_calls, tool_results)
+        if recovery_message is not None:
+            yield StatusEvent(message=TOOL_INPUT_RECOVERY_STATUS), None
+            messages.append(ConversationMessage.from_user_text(recovery_message))
 
     if context.max_turns is not None:
         raise MaxTurnsExceeded(context.max_turns)
     raise RuntimeError("Query loop exited without a max_turns limit or final response")
+
+
+def _format_tool_input_validation_error(
+    tool_name: str,
+    tool_input: dict[str, object],
+    exc: Exception,
+) -> str:
+    raw_arguments = tool_input.get(INVALID_TOOL_ARGUMENTS_FIELD)
+    if isinstance(raw_arguments, str) and raw_arguments:
+        return (
+            f"{TOOL_INPUT_ERROR_PREFIX} for {tool_name}: invalid JSON arguments.\n"
+            f"Raw arguments: {raw_arguments}\n"
+            "Recovery: retry this tool call with a valid JSON object containing every required field."
+        )
+
+    missing_fields: list[str] = []
+    if isinstance(exc, ValidationError):
+        for error in exc.errors():
+            if error.get("type") == "missing":
+                loc = error.get("loc", ())
+                if loc:
+                    missing_fields.append(str(loc[-1]))
+
+    if missing_fields:
+        missing = ", ".join(dict.fromkeys(missing_fields))
+        provided = ", ".join(tool_input.keys()) if tool_input else "none"
+        return (
+            f"{TOOL_INPUT_ERROR_PREFIX} for {tool_name}: missing required fields: {missing}.\n"
+            f"Provided fields: {provided}.\n"
+            "Recovery: retry this tool call with valid JSON arguments containing every required field."
+        )
+
+    return (
+        f"{TOOL_INPUT_ERROR_PREFIX} for {tool_name}: invalid arguments.\n"
+        f"{exc}\n"
+        "Recovery: retry this tool call with valid JSON arguments matching the tool schema."
+    )
+
+
+def _tool_input_recovery_message(
+    tool_calls: list[Any],
+    tool_results: list[ToolResultBlock],
+) -> str | None:
+    invalid_calls: list[str] = []
+    for tool_call, result in zip(tool_calls, tool_results):
+        if result.is_error and result.content.startswith(TOOL_INPUT_ERROR_PREFIX):
+            invalid_calls.append(tool_call.name)
+
+    if not invalid_calls:
+        return None
+
+    tool_names = ", ".join(dict.fromkeys(invalid_calls))
+    return (
+        f"The previous tool call failed because {tool_names} received invalid or missing arguments. "
+        "Do not answer in prose. Retry the failed tool call now with valid JSON arguments and include "
+        "all required fields from the tool schema."
+    )
 
 
 async def _execute_tool_call(
@@ -629,7 +697,7 @@ async def _execute_tool_call(
         log.warning("invalid input for %s: %s", tool_name, exc)
         return ToolResultBlock(
             tool_use_id=tool_use_id,
-            content=f"Invalid input for {tool_name}: {exc}",
+            content=_format_tool_input_validation_error(tool_name, tool_input, exc),
             is_error=True,
         )
 

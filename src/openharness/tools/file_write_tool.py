@@ -12,8 +12,8 @@ from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 class FileWriteToolInput(BaseModel):
     """Arguments for the file write tool."""
 
-    path: str = Field(description="Path of the file to write")
-    content: str = Field(description="Full file contents")
+    path: str = Field(description="Required. Path of the file to create or overwrite.")
+    content: str = Field(description="Required. Complete file contents to write.")
     create_directories: bool = Field(default=True)
 
 
@@ -21,7 +21,12 @@ class FileWriteTool(BaseTool):
     """Write complete file contents."""
 
     name = "write_file"
-    description = "Create or overwrite a text file in the local repository."
+    description = (
+        "Create or overwrite a text file in the local repository. "
+        "Always call this with a JSON object containing required string fields "
+        '`path` and `content`, for example {"path":"index.html","content":"..."}; '
+        "do not call it with empty arguments."
+    )
     input_model = FileWriteToolInput
 
     async def execute(

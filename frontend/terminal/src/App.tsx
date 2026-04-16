@@ -129,6 +129,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		return session.commands.filter((cmd) => cmd.name.startsWith(value)).slice(0, 12);
 	}, [session.commands, input]);
 
+	const commandMode = input.trimStart().startsWith('/');
 	const showPicker = commandHints.length > 0 && !session.busy && !session.modal && !selectModal && !multiSelectModal;
 	const outputStyle = String(session.status.output_style ?? 'default');
 
@@ -350,27 +351,29 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			return;
 		}
 
-		// --- Command picker ---
-		if (showPicker) {
-			if (key.upArrow) {
+		// --- Slash command input/picker ---
+		if (commandMode) {
+			if (showPicker && key.upArrow) {
 				setPickerIndex((i) => Math.max(0, i - 1));
 				return;
 			}
-			if (key.downArrow) {
+			if (showPicker && key.downArrow) {
 				setPickerIndex((i) => Math.min(commandHints.length - 1, i + 1));
 				return;
 			}
 			if (key.return) {
-				const selected = commandHints[pickerIndex];
+				const selected = showPicker ? commandHints[pickerIndex] : undefined;
 				if (selected) {
 					setInput('');
 					if (!handleCommand(selected.name)) {
 						onSubmit(selected.name);
 					}
+				} else if (input.trim()) {
+					onSubmit(input);
 				}
 				return;
 			}
-			if (key.tab) {
+			if (showPicker && key.tab) {
 				const selected = commandHints[pickerIndex];
 				if (selected) {
 					setInput(selected.name + ' ');
@@ -379,6 +382,8 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			}
 			if (key.escape) {
 				setInput('');
+				setHistoryIndex(-1);
+				setLastEscapeAt(0);
 				return;
 			}
 			// Backspace: remove last char so user can exit picker by deleting "/"
@@ -391,6 +396,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				setInput((prev) => prev + chunk);
 				return;
 			}
+			return;
 		}
 
 		if (key.escape) {
@@ -550,7 +556,8 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 					onSubmit={onSubmit}
 					toolName={session.busy ? currentToolName : undefined}
 					statusLabel={session.busy ? (session.busyLabel ?? (currentToolName ? `Running ${currentToolName}...` : undefined)) : undefined}
-					suppressSubmit={showPicker}
+					suppressSubmit={commandMode}
+					focus={!commandMode}
 				/>
 			)}
 
