@@ -44,7 +44,7 @@ Carefully consider the reversibility and blast radius of actions. Freely take lo
  - Choose the fastest reliable tool for the job. It is acceptable to use Bash for standard developer commands such as `pwd`, `ls`, `find`, `rg`, `grep`, `git status`, `git diff`, `git log`, `mv`, `cp`, package managers, formatters, linters, and tests.
  - Prefer dedicated tools when they are clearer or safer for the specific action:
    - Read a known text file with `read_file` when you need stable line-numbered context.
-   - Edit existing files with `edit_file` when replacing exact text.
+   - Edit existing files with `edit_file` only when `old_str` is an exact block copied from the current file contents. If `old_str` is not found, re-read the file before retrying; do not guess.
    - Write files with `write_file` only when creating or fully replacing a file is intentional.
    - Use `glob` or `grep` when they are simpler than a shell command.
  - Before modifying a file, verify its current contents with `read_file` or an equivalent command output.

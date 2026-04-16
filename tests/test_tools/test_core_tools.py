@@ -57,6 +57,27 @@ async def test_file_write_read_and_edit(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_file_edit_missing_old_str_returns_actionable_error(tmp_path: Path):
+    context = ToolExecutionContext(cwd=tmp_path)
+    (tmp_path / "notes.txt").write_text("startButton.addEventListener('click', startGame);\n", encoding="utf-8")
+
+    edit_result = await FileEditTool().execute(
+        FileEditToolInput(
+            path="notes.txt",
+            old_str="// ========== 초기화 및 이벤트 바인딩 ========== startButton.addEv",
+            new_str="replacement",
+        ),
+        context,
+    )
+
+    assert edit_result.is_error is True
+    assert "old_str was not found in the file" in edit_result.output
+    assert "requires an exact" in edit_result.output
+    assert "Closest line in file: startButton.addEventListener" in edit_result.output
+    assert "use read_file on this path" in edit_result.output
+
+
+@pytest.mark.asyncio
 async def test_glob_and_grep(tmp_path: Path):
     context = ToolExecutionContext(cwd=tmp_path)
     (tmp_path / "a.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")
