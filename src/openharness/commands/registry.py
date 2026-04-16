@@ -2002,7 +2002,21 @@ def create_default_command_registry(
             ).strip()
             return process.returncode or 0, output
 
-        async def _pip_install() -> str:
+        def _pip_failure_message(output: str) -> str:
+            install_command = f"{sys.executable} -m pip install -e {repo_root}"
+            if "WinError 32" in output or "oh.exe" in output.lower():
+                return (
+                    "❌ 재설치 실패: 현재 실행 중인 HanHarness가 pipx 실행 파일을 잠그고 있습니다.\n"
+                    "Windows에서는 실행 중인 CLI가 자기 자신의 `oh.exe`를 덮어쓸 수 없습니다.\n\n"
+                    "이 창을 `ctrl+c`로 완전히 종료한 뒤, 새 CMD/PowerShell에서 아래 명령을 실행하세요:\n"
+                    f"  cd /d {repo_root}\n"
+                    "  pipx install --force --editable .\n\n"
+                    f"직접 pip 명령이 필요하면:\n  {install_command}\n\n"
+                    f"원본 오류:\n```\n{output}\n```"
+                )
+            return f"❌ 재설치 실패:\n```\n{output}\n```"
+
+        async def _pip_install() -> tuple[bool, str]:
             """Re-install in editable mode with the current interpreter to pick up dependency changes.
             (현재 인터프리터로 editable 재설치 — 의존성 변경 반영)
             """
@@ -2012,13 +2026,15 @@ def create_default_command_registry(
                 timeout=install_timeout,
             )
             if returncode != 0:
-                return output or f"pip install failed with exit code {returncode}"
-            return output
+                return False, output or f"pip install failed with exit code {returncode}"
+            return True, output
 
         # Force-reinstall mode: skip git pull, just re-run pip install -e
         # (강제 재설치 모드: git pull 없이 pip install -e만 실행)
         if force:
-            pip_out = await _pip_install()
+            pip_ok, pip_out = await _pip_install()
+            if not pip_ok:
+                return CommandResult(message=_pip_failure_message(pip_out))
             return CommandResult(
                 message=(
                     "✅ 강제 재설치 완료! 변경사항 적용을 위해 프로그램을 재시작하세요.\n"
@@ -2051,7 +2067,15 @@ def create_default_command_registry(
             )
 
         # 변경사항 있음 → pip 재설치 (새 의존성 반영)
-        pip_out = await _pip_install()
+        pip_ok, pip_out = await _pip_install()
+        if not pip_ok:
+            return CommandResult(
+                message=(
+                    "⚠️ 소스 업데이트는 완료됐지만 재설치에 실패했습니다.\n\n"
+                    f"```\n{output}\n```\n\n"
+                    f"{_pip_failure_message(pip_out)}"
+                )
+            )
         return CommandResult(
             message=(
                 "✅ 업데이트 완료! 변경사항 적용을 위해 프로그램을 재시작하세요.\n"

@@ -379,6 +379,48 @@ async def test_update_command_runs_non_interactive_git_pull(tmp_path: Path, monk
 
 
 @pytest.mark.asyncio
+async def test_update_force_reports_pip_lock_failure(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    calls = []
+
+    class _FakeProcess:
+        returncode = 1
+
+        async def communicate(self):
+            return b"", b"ERROR: [WinError 32] file is locked: 'C:\\\\pipx\\\\venvs\\\\hanharness\\\\scripts\\\\oh.exe'"
+
+        def kill(self):
+            raise AssertionError("process should not time out")
+
+        async def wait(self):
+            return 0
+
+    async def _fake_create_subprocess_exec(*command, **kwargs):
+        calls.append((command, kwargs))
+        return _FakeProcess()
+
+    monkeypatch.setattr(
+        registry_module.asyncio,
+        "create_subprocess_exec",
+        _fake_create_subprocess_exec,
+    )
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/update force")
+    assert command is not None
+
+    result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
+
+    assert "재설치 실패" in result.message
+    assert "자기 자신의 `oh.exe`를 덮어쓸 수 없습니다" in result.message
+    assert "pipx install --force --editable ." in result.message
+    assert "강제 재설치 완료" not in result.message
+    assert calls
+    pip_command, kwargs = calls[0]
+    assert pip_command[1:4] == ("-m", "pip", "install")
+    assert kwargs["stdin"] == registry_module.asyncio.subprocess.DEVNULL
+
+
+@pytest.mark.asyncio
 async def test_memory_command_manages_entries(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
