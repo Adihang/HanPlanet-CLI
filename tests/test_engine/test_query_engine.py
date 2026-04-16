@@ -128,10 +128,37 @@ class PromptTooLongThenSuccessApiClient:
 
 
 class EmptyAssistantApiClient:
+    def __init__(self) -> None:
+        self.requests = []
+
     async def stream_message(self, request):
-        del request
+        self.requests.append(request)
         yield ApiMessageCompleteEvent(
             message=ConversationMessage(role="assistant", content=[]),
+            usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            stop_reason=None,
+        )
+
+
+class EmptyThenSuccessApiClient:
+    def __init__(self) -> None:
+        self.requests = []
+        self._calls = 0
+
+    async def stream_message(self, request):
+        self.requests.append(request)
+        self._calls += 1
+        if self._calls == 1:
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(role="assistant", content=[]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                stop_reason=None,
+            )
+            return
+
+        yield ApiTextDeltaEvent(text="recovered")
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="recovered")]),
             usage=UsageSnapshot(input_tokens=1, output_tokens=1),
             stop_reason=None,
         )
@@ -1049,9 +1076,35 @@ async def test_query_engine_synthesizes_tool_result_when_parallel_tool_raises(tm
 
 
 @pytest.mark.asyncio
-async def test_query_engine_drops_empty_assistant_messages(tmp_path: Path):
+async def test_query_engine_retries_empty_assistant_messages(tmp_path: Path):
+    api_client = EmptyThenSuccessApiClient()
     engine = QueryEngine(
-        api_client=EmptyAssistantApiClient(),
+        api_client=api_client,
+        tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("continue")]
+
+    assert any(isinstance(event, StatusEvent) and "Retrying (1/2)" in event.message for event in events)
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "recovered"
+    assert len(api_client.requests) == 2
+    second_request_messages = api_client.requests[1].messages
+    assert any(
+        message.role == "user" and "Your previous response was empty" in message.text
+        for message in second_request_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_engine_errors_after_empty_assistant_retries(tmp_path: Path):
+    api_client = EmptyAssistantApiClient()
+    engine = QueryEngine(
+        api_client=api_client,
         tool_registry=ToolRegistry(),
         permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
         cwd=tmp_path,
@@ -1061,7 +1114,17 @@ async def test_query_engine_drops_empty_assistant_messages(tmp_path: Path):
 
     events = [event async for event in engine.submit_message("hello")]
 
-    assert any(isinstance(event, ErrorEvent) for event in events)
+    retry_events = [event for event in events if isinstance(event, StatusEvent) and "Retrying" in event.message]
+    assert [event.message for event in retry_events] == [
+        "Model returned an empty assistant message. Retrying (1/2)...",
+        "Model returned an empty assistant message. Retrying (2/2)...",
+    ]
+    assert any(
+        isinstance(event, ErrorEvent)
+        and "Retried automatically but the model kept returning empty responses" in event.message
+        for event in events
+    )
     assert not any(isinstance(event, AssistantTurnComplete) for event in events)
+    assert len(api_client.requests) == 3
     assert len(engine.messages) == 1
     assert engine.messages[0].role == "user"

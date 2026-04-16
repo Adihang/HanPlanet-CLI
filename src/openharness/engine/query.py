@@ -42,6 +42,7 @@ AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep thing
 REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memory and retrying."
 TOOL_INPUT_ERROR_PREFIX = "Tool-call input error"
 TOOL_INPUT_RECOVERY_STATUS = "Recovering from invalid tool arguments..."
+MAX_EMPTY_ASSISTANT_RETRIES = 2
 
 log = logging.getLogger(__name__)
 
@@ -462,6 +463,7 @@ async def run_query(
         return
 
     turn_count = 0
+    empty_assistant_retries = 0
     while context.max_turns is None or turn_count < context.max_turns:
         turn_count += 1
         # --- auto-compact check before calling the model ---------------
@@ -526,13 +528,32 @@ async def run_query(
 
         if final_message.role == "assistant" and final_message.is_effectively_empty():
             log.warning("dropping empty assistant message from provider response")
+            if empty_assistant_retries < MAX_EMPTY_ASSISTANT_RETRIES:
+                empty_assistant_retries += 1
+                yield StatusEvent(
+                    message=(
+                        "Model returned an empty assistant message. "
+                        f"Retrying ({empty_assistant_retries}/{MAX_EMPTY_ASSISTANT_RETRIES})..."
+                    )
+                ), usage
+                messages.append(
+                    ConversationMessage.from_user_text(
+                        "Your previous response was empty. Continue the task now. "
+                        "If file changes are needed, call the appropriate tools with valid arguments; "
+                        "do not return an empty message."
+                    )
+                )
+                continue
             yield ErrorEvent(
                 message=(
                     "Model returned an empty assistant message. "
-                    "The turn was ignored to keep the session healthy."
+                    "Retried automatically but the model kept returning empty responses. "
+                    "Try again, switch models, or compact the conversation."
                 )
             ), usage
             return
+
+        empty_assistant_retries = 0
 
         messages.append(final_message)
         yield AssistantTurnComplete(message=final_message, usage=usage), usage
