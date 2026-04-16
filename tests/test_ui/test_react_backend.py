@@ -139,6 +139,34 @@ async def test_backend_host_processes_command(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_backend_host_does_not_refresh_hanplanet_token_for_slash_command(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    async def _fail_refresh():
+        raise AssertionError("slash commands must not refresh Hanplanet tokens")
+
+    host._emit = _emit  # type: ignore[method-assign]
+    host._maybe_refresh_hanplanet_token = _fail_refresh  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line("/version")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert any(event.type == "line_complete" for event in events)
+
+
+@pytest.mark.asyncio
 async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))

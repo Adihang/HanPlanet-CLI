@@ -309,10 +309,11 @@ class ReactBackendHost:
         async def _clear_output() -> None:
             await self._emit(BackendEvent(type="clear_transcript"))
 
-        # Silently refresh the Hanplanet access token before each turn if it is
-        # close to expiry, so the user never hits an authentication error mid-session.
-        # (매 턴 전 Hanplanet 토큰 만료 여부를 조용히 확인해 자동 갱신)
-        await self._maybe_refresh_hanplanet_token()
+        # Only model turns need proactive Hanplanet token refresh. Slash commands
+        # such as /update must stay local and should not be blocked by API health.
+        # (모델 호출 전에만 Hanplanet 토큰을 갱신한다. /update 같은 로컬 명령은 API 상태에 막히면 안 된다.)
+        if not line.startswith("/"):
+            await self._maybe_refresh_hanplanet_token()
 
         if line.startswith("/"):
             command_label = line.split(maxsplit=1)[0]
