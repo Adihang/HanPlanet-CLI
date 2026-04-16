@@ -33,14 +33,14 @@ def resolve_shell_command(
     bash = shutil.which("bash")
     if bash:
         argv = [bash, "-lc", command]
-        if prefer_pty:
+        if prefer_pty and resolved_platform != "macos":
             wrapped = _wrap_command_with_script(argv)
             if wrapped is not None:
                 return wrapped
         return argv
     shell = shutil.which("sh") or os.environ.get("SHELL") or "/bin/sh"
     argv = [shell, "-lc", command]
-    if prefer_pty:
+    if prefer_pty and resolved_platform != "macos":
         wrapped = _wrap_command_with_script(argv)
         if wrapped is not None:
             return wrapped

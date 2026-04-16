@@ -61,6 +61,239 @@ hanplanet                 # pipx 전역 설치 후
 hanplanet -p "질문"       # 비대화형 모드
 ```
 
+원본 OpenHarness 진입점도 유지됩니다.
+
+```bash
+oh
+# On Windows PowerShell, use: openh
+```
+
+<p align="center">
+  <img src="assets/landing.png" alt="OpenHarness Landing Screen" width="700">
+</p>
+
+### 4. Set up ohmo (Personal Agent)
+
+Want an AI agent that works for you from Feishu / Slack / Telegram / Discord?
+
+```bash
+ohmo init             # initialize ~/.ohmo workspace
+ohmo config           # configure channels and provider
+ohmo gateway start    # start the gateway — ohmo is now live in your chat app
+```
+
+ohmo runs on your existing **Claude Code subscription** or **Codex subscription** — no extra API key needed.
+
+### Non-Interactive Mode (Pipes & Scripts)
+
+```bash
+# Single prompt → stdout
+oh -p "Explain this codebase"
+
+# JSON output for programmatic use
+oh -p "List all functions in main.py" --output-format json
+
+# Stream JSON events in real-time
+oh -p "Fix the bug" --output-format stream-json
+```
+
+## 🔌 Provider Compatibility
+
+OpenHarness treats providers as **workflows** backed by named profiles. In day-to-day use, prefer:
+
+```bash
+oh setup
+oh provider list
+oh provider use <profile>
+```
+
+### Built-in Workflows
+
+| Workflow | What it is | Typical backends |
+|----------|------------|------------------|
+| **Anthropic-Compatible API** | Anthropic-style request format | Claude official, Kimi, GLM, MiniMax, internal Anthropic-compatible gateways |
+| **Claude Subscription** | Claude CLI subscription bridge | Local `~/.claude/.credentials.json` |
+| **OpenAI-Compatible API** | OpenAI-style request format | OpenAI official, OpenRouter, DashScope, DeepSeek, SiliconFlow, Groq, Ollama, GitHub Models |
+| **Codex Subscription** | Codex CLI subscription bridge | Local `~/.codex/auth.json` |
+| **GitHub Copilot** | Copilot OAuth workflow | GitHub Copilot device-flow login |
+
+### Compatible API Families
+
+#### Anthropic-Compatible API
+
+Typical examples:
+
+| Backend | Base URL | Example models |
+|---------|----------|----------------|
+| **Claude official** | `https://api.anthropic.com` | `claude-sonnet-4-6`, `claude-opus-4-6` |
+| **Moonshot / Kimi** | `https://api.moonshot.cn/anthropic` | `kimi-k2.5` |
+| **Zhipu / GLM** | custom Anthropic-compatible endpoint | `glm-4.5` |
+| **MiniMax** | custom Anthropic-compatible endpoint | `minimax-m1` |
+
+#### OpenAI-Compatible API
+
+Any provider implementing the OpenAI `/v1/chat/completions` style API works:
+
+| Backend | Base URL | Example models |
+|---------|----------|----------------|
+| **OpenAI** | `https://api.openai.com/v1` | `gpt-5.4`, `gpt-4.1` |
+| **OpenRouter** | `https://openrouter.ai/api/v1` | provider-specific |
+| **Alibaba DashScope** | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen3.5-flash`, `qwen3-max`, `deepseek-r1` |
+| **DeepSeek** | `https://api.deepseek.com` | `deepseek-chat`, `deepseek-reasoner` |
+| **GitHub Models** | `https://models.inference.ai.azure.com` | `gpt-4o`, `Meta-Llama-3.1-405B-Instruct` |
+| **SiliconFlow** | `https://api.siliconflow.cn/v1` | `deepseek-ai/DeepSeek-V3` |
+| **Google Gemini** | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash`, `gemini-2.5-pro` |
+| **Groq** | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` |
+| **Ollama (local)** | `http://localhost:11434/v1` | any local model |
+
+### Advanced Profile Management
+
+```bash
+# List saved workflows
+oh provider list
+
+# Switch the active workflow
+oh provider use codex
+
+# Add your own compatible endpoint
+oh provider add my-endpoint \
+  --label "My Endpoint" \
+  --provider openai \
+  --api-format openai \
+  --auth-source openai_api_key \
+  --model my-model \
+  --base-url https://example.com/v1
+```
+
+For custom compatible endpoints, OpenHarness can bind credentials per profile instead of forcing every Anthropic-compatible or OpenAI-compatible backend to share the same API key.
+
+### Ollama (Local Models)
+
+Run local models through Ollama's OpenAI-compatible endpoint:
+
+```bash
+# Add an Ollama provider profile
+oh provider add ollama \
+  --label "Ollama" \
+  --provider Ollama \
+  --api-format openai \
+  --auth-source openai_api_key \
+  --model glm-4.7-flash:q8_0 \
+  --base-url http://localhost:11434/v1
+```
+```
+Saved provider profile: ollama
+```
+
+```bash
+# Activate and verify
+oh provider use ollama
+```
+```
+Activated provider profile: ollama
+```
+
+```bash
+oh provider list
+```
+```
+  claude-api: Anthropic-Compatible API [ready]
+  ...
+  moonshot: Moonshot (Kimi) [missing auth]
+    auth=moonshot_api_key model=kimi-k2.5 base_url=https://api.moonshot.cn/v1
+* ollama: Ollama [ready]
+    auth=openai_api_key model=glm-4.7-flash:q8_0 base_url=http://localhost:11434/v1
+```
+
+### GitHub Copilot Format (`--api-format copilot`)
+
+Use your existing GitHub Copilot subscription as the LLM backend. Authentication uses GitHub's OAuth device flow — no API keys needed.
+
+```bash
+# One-time login (opens browser for GitHub authorization)
+oh auth copilot-login
+
+# Then launch with Copilot as the provider
+uv run oh --api-format copilot
+
+# Or via environment variable
+export OPENHARNESS_API_FORMAT=copilot
+uv run oh
+
+# Check auth status
+oh auth status
+
+# Remove stored credentials
+oh auth copilot-logout
+```
+
+| Feature | Details |
+|---------|---------|
+| **Auth method** | GitHub OAuth device flow (no API key needed) |
+| **Token management** | Automatic refresh of short-lived session tokens |
+| **Enterprise** | Supports GitHub Enterprise via `--github-domain` flag |
+| **Models** | Uses Copilot's default model selection |
+| **API** | OpenAI-compatible chat completions under the hood |
+
+---
+
+## 🏗️ Harness Architecture
+
+OpenHarness implements the core Agent Harness pattern with 10 subsystems:
+
+```
+openharness/
+  engine/          # 🧠 Agent Loop — query → stream → tool-call → loop
+  tools/           # 🔧 43 Tools — file I/O, shell, search, web, MCP
+  skills/          # 📚 Knowledge — on-demand skill loading (.md files)
+  plugins/         # 🔌 Extensions — commands, hooks, agents, MCP servers
+  permissions/     # 🛡️ Safety — multi-level modes, path rules, command deny
+  hooks/           # ⚡ Lifecycle — PreToolUse/PostToolUse event hooks
+  commands/        # 💬 54 Commands — /help, /commit, /plan, /resume, ...
+  mcp/             # 🌐 MCP — Model Context Protocol client
+  memory/          # 🧠 Memory — persistent cross-session knowledge
+  tasks/           # 📋 Tasks — background task management
+  coordinator/     # 🤝 Multi-Agent — subagent spawning, team coordination
+  prompts/         # 📝 Context — system prompt assembly, CLAUDE.md, skills
+  config/          # ⚙️ Settings — multi-layer config, migrations
+  ui/              # 🖥️ React TUI — backend protocol + frontend
+```
+
+### The Agent Loop
+
+The heart of the harness. One loop, endlessly composable:
+
+```python
+while True:
+    response = await api.stream(messages, tools)
+
+    if response.stop_reason != "tool_use":
+        break  # Model is done
+
+    for tool_call in response.tool_uses:
+        # Permission check → Hook → Execute → Hook → Result
+        result = await harness.execute_tool(tool_call)
+
+    messages.append(tool_results)
+    # Loop continues — model sees results, decides next action
+```
+
+The model decides **what** to do. The harness handles **how** — safely, efficiently, with full observability.
+
+### Harness Flow
+
+```mermaid
+flowchart LR
+    U[User Prompt] --> C[CLI or React TUI]
+    C --> R[RuntimeBundle]
+    R --> Q[QueryEngine]
+    Q --> A[Anthropic-compatible API Client]
+    A -->|tool_use| T[Tool Registry]
+    T --> P[Permissions + Hooks]
+    P --> X[Files Shell Web MCP Tasks]
+    X --> Q
+```
+
 ---
 
 ## 주요 커스텀 내용
