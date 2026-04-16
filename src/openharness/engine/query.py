@@ -44,6 +44,7 @@ TOOL_INPUT_ERROR_PREFIX = "Tool-call input error"
 TOOL_INPUT_RECOVERY_STATUS = "Recovering from invalid tool arguments..."
 MAX_EMPTY_ASSISTANT_RETRIES = 2
 MAX_STREAM_FAILURE_RETRIES = 1
+MAX_ACTION_PROMISE_RETRIES = 1
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +92,48 @@ def _is_network_stream_error_message(message: str) -> bool:
             "connection reset",
         )
     )
+
+
+def _looks_like_unexecuted_file_action(message: ConversationMessage) -> bool:
+    if message.role != "assistant" or message.tool_uses:
+        return False
+    text = message.text.lower()
+    if not text.strip():
+        return False
+    file_terms = (
+        "file",
+        "파일",
+        "code",
+        "코드",
+        "write_file",
+        "edit_file",
+        ".html",
+        ".css",
+        ".js",
+        ".py",
+        "덮어쓰기",
+        "overwrite",
+    )
+    action_terms = (
+        "수정하겠습니다",
+        "생성하겠습니다",
+        "작성하겠습니다",
+        "적용하겠습니다",
+        "구현하겠습니다",
+        "완성하겠습니다",
+        "덮어쓰겠습니다",
+        "덮어쓰는 중",
+        "업데이트하겠습니다",
+        "modify the file",
+        "create the file",
+        "write the file",
+        "update the file",
+        "overwrite",
+        "apply the changes",
+        "i will edit",
+        "i will write",
+    )
+    return any(term in text for term in file_terms) and any(term in text for term in action_terms)
 
 
 class MaxTurnsExceeded(RuntimeError):
@@ -483,6 +526,7 @@ async def run_query(
     turn_count = 0
     empty_assistant_retries = 0
     stream_failure_retries = 0
+    action_promise_retries = 0
     while context.max_turns is None or turn_count < context.max_turns:
         turn_count += 1
         # --- auto-compact check before calling the model ---------------
@@ -592,6 +636,26 @@ async def run_query(
             return
 
         empty_assistant_retries = 0
+
+        if _looks_like_unexecuted_file_action(final_message):
+            if action_promise_retries < MAX_ACTION_PROMISE_RETRIES:
+                action_promise_retries += 1
+                yield StatusEvent(
+                    message=(
+                        "Assistant described file changes but did not call a tool. "
+                        f"Retrying with tool-use instruction ({action_promise_retries}/{MAX_ACTION_PROMISE_RETRIES})..."
+                    )
+                ), usage
+                messages.append(
+                    ConversationMessage.from_user_text(
+                        "You said you would modify project files, but you did not call any tools. "
+                        "Continue now by inspecting or editing the actual files with valid tool calls. "
+                        "Do not ask me to copy code or wait for another confirmation unless a risky action is required."
+                    )
+                )
+                continue
+
+        action_promise_retries = 0
 
         messages.append(final_message)
         yield AssistantTurnComplete(message=final_message, usage=usage), usage

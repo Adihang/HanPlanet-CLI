@@ -193,6 +193,32 @@ class EmptyThenSuccessApiClient:
         )
 
 
+class ActionPromiseThenSuccessApiClient:
+    def __init__(self) -> None:
+        self.requests = []
+        self._calls = 0
+
+    async def stream_message(self, request):
+        self.requests.append(request)
+        self._calls += 1
+        if self._calls == 1:
+            text = "파일을 덮어쓰겠습니다. 잠시만 기다려 주세요. 파일을 덮어쓰는 중입니다."
+            yield ApiTextDeltaEvent(text=text)
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text=text)]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                stop_reason=None,
+            )
+            return
+
+        yield ApiTextDeltaEvent(text="Applied the changes.")
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="Applied the changes.")]),
+            usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            stop_reason=None,
+        )
+
+
 class CoordinatorLoopApiClient:
     def __init__(self) -> None:
         self.requests = []
@@ -1205,3 +1231,35 @@ async def test_query_engine_errors_after_empty_assistant_retries(tmp_path: Path)
     assert len(api_client.requests) == 3
     assert len(engine.messages) == 1
     assert engine.messages[0].role == "user"
+
+
+@pytest.mark.asyncio
+async def test_query_engine_retries_unexecuted_file_action_promise(tmp_path: Path):
+    api_client = ActionPromiseThenSuccessApiClient()
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=ToolRegistry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("apply that code")]
+
+    assert any(
+        isinstance(event, StatusEvent)
+        and "Assistant described file changes but did not call a tool" in event.message
+        for event in events
+    )
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "Applied the changes."
+    assert len(api_client.requests) == 2
+    second_request_messages = api_client.requests[1].messages
+    assert any(
+        message.role == "user" and "you did not call any tools" in message.text
+        for message in second_request_messages
+    )
+    assert len(engine.messages) == 3
+    assert "you did not call any tools" in engine.messages[1].text
+    assert engine.messages[-1].text == "Applied the changes."
