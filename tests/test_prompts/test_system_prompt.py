@@ -84,3 +84,11 @@ def test_build_system_prompt_requires_inspection_before_modification():
     prompt = build_system_prompt(env=env)
     assert "Do not guess project structure" in prompt
     assert "Before modifying a file, verify its current contents" in prompt
+
+
+def test_build_system_prompt_tells_agent_to_edit_files_directly():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+    assert "make the file changes yourself with tools" in prompt
+    assert "Do not answer with code blocks and ask the user to copy, paste, or apply them manually" in prompt
+    assert "unless the user explicitly asks for instructions only" in prompt
