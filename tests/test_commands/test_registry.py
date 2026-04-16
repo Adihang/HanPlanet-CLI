@@ -605,7 +605,7 @@ demo = "demo:main"
     init_command, init_args = registry.lookup("/init")
     init_result = await init_command.handler(init_args, context)
     assert "Initialized project files" in init_result.message or "already initialized" in init_result.message
-    assert "AI draft failed, so a local scan fallback was used." in init_result.message
+    assert "AI draft failed. Used local scan. Reason: model request failed" in init_result.message
     claude_md = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert "demo-project" in claude_md
     assert "uv run pytest -q" in claude_md

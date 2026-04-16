@@ -356,10 +356,14 @@ async def _draft_claude_md_with_model(cwd: Path, context: CommandContext) -> tup
         if not draft and final_message is not None:
             draft = _extract_text_from_assistant_message(final_message)
         if not draft:
-            return None, False
-        return draft, False
-    except Exception:
-        return None, True
+            return None, "empty model response"
+        return draft, None
+    except Exception as exc:
+        reason = "model request failed"
+        details = str(exc).strip()
+        if details:
+            reason = f"{reason}: {details}"
+        return None, reason
 
 
 def _copy_to_clipboard(text: str) -> tuple[bool, str]:
@@ -839,9 +843,9 @@ def create_default_command_registry(
 
         claudemd = cwd / "CLAUDE.md"
         claudemd_existed = claudemd.exists()
-        model_fallback_used = False
+        fallback_reason: str | None = None
         if force or not claudemd.exists():
-            drafted, model_fallback_used = await _draft_claude_md_with_model(cwd, context)
+            drafted, fallback_reason = await _draft_claude_md_with_model(cwd, context)
             claudemd.write_text(drafted or _generate_claude_md(cwd), encoding="utf-8")
             created.append(str(claudemd.relative_to(Path(context.cwd))))
 
@@ -874,8 +878,8 @@ def create_default_command_registry(
         if force and claudemd_existed:
             header = "Regenerated project files"
         message = f"{header}:\n" + "\n".join(f"- {item}" for item in created)
-        if model_fallback_used:
-            message += "\n\nAI draft failed, so a local scan fallback was used."
+        if fallback_reason:
+            message += f"\n\nAI draft failed. Used local scan. Reason: {fallback_reason}"
         return CommandResult(message=message)
 
     async def _bridge_handler(args: str, context: CommandContext) -> CommandResult:
