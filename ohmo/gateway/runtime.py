@@ -137,6 +137,7 @@ class OhmoSessionRuntimePool:
         if snapshot and snapshot.get("session_id"):
             bundle.session_id = str(snapshot["session_id"])
         await start_runtime(bundle)
+        bundle.engine.set_system_prompt(self._runtime_system_prompt(bundle, latest_user_prompt))
         logger.info(
             "ohmo runtime started session_key=%s session_id=%s restored_messages=%s",
             session_key,
@@ -516,6 +517,8 @@ class OhmoSessionRuntimePool:
         return refreshed
 
     def _runtime_system_prompt(self, bundle: RuntimeBundle, latest_user_prompt: str | None) -> str:
+        if not hasattr(bundle, "current_settings"):
+            return build_ohmo_system_prompt(self._cwd, workspace=self._workspace, extra_prompt=None)
         settings = bundle.current_settings()
         if not hasattr(settings, "system_prompt"):
             return build_ohmo_system_prompt(self._cwd, workspace=self._workspace, extra_prompt=None)
