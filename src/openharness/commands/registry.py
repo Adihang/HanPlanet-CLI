@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.metadata
 import asyncio
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -1973,10 +1974,19 @@ def create_default_command_registry(
                 )
             )
 
+        update_env = {
+            **os.environ,
+            "GIT_TERMINAL_PROMPT": "0",
+            "GCM_INTERACTIVE": "Never",
+            "PIP_NO_INPUT": "1",
+        }
+
         async def _run_command(command: list[str], *, cwd: Path, timeout: float) -> tuple[int, str]:
             process = await asyncio.create_subprocess_exec(
                 *command,
                 cwd=str(cwd),
+                env=update_env,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -2020,7 +2030,7 @@ def create_default_command_registry(
         # git pull
         try:
             returncode, output = await _run_command(
-                ["git", "pull", "origin", "main"],
+                ["git", "pull", "--ff-only", "origin", "main"],
                 cwd=repo_root,
                 timeout=git_timeout,
             )

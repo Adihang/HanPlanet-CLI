@@ -337,6 +337,48 @@ async def test_doctor_command_reports_context(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_update_command_runs_non_interactive_git_pull(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    calls = []
+
+    class _FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b"Already up to date.\n", b""
+
+        def kill(self):
+            raise AssertionError("process should not time out")
+
+        async def wait(self):
+            return 0
+
+    async def _fake_create_subprocess_exec(*command, **kwargs):
+        calls.append((command, kwargs))
+        return _FakeProcess()
+
+    monkeypatch.setattr(
+        registry_module.asyncio,
+        "create_subprocess_exec",
+        _fake_create_subprocess_exec,
+    )
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/update")
+    assert command is not None
+
+    result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
+
+    assert "이미 최신 소스입니다" in result.message
+    assert calls
+    git_command, kwargs = calls[0]
+    assert git_command[:4] == ("git", "pull", "--ff-only", "origin")
+    assert kwargs["stdin"] == registry_module.asyncio.subprocess.DEVNULL
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert kwargs["env"]["GCM_INTERACTIVE"] == "Never"
+    assert kwargs["env"]["PIP_NO_INPUT"] == "1"
+
+
+@pytest.mark.asyncio
 async def test_memory_command_manages_entries(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
