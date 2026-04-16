@@ -4,6 +4,13 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from ohmo.cli import app
+from openharness.auth.manager import AuthManager
+from openharness.config import load_settings
+
+
+def _provider_menu_index(name: str) -> str:
+    statuses = AuthManager(load_settings()).get_profile_statuses()
+    return str(list(statuses).index(name) + 1)
 
 
 def test_ohmo_help():
@@ -39,6 +46,15 @@ def test_ohmo_init_existing_workspace_points_to_config(tmp_path: Path):
     assert "Use `ohmo config`" in second.output
 
 
+def test_ohmo_init_noninteractive_defaults_to_deny_all_remote_access(tmp_path: Path):
+    runner = CliRunner()
+    workspace = tmp_path / ".ohmo-home"
+    result = runner.invoke(app, ["init", "--workspace", str(workspace), "--no-interactive"])
+    assert result.exit_code == 0
+    config = json.loads((workspace / "gateway.json").read_text(encoding="utf-8"))
+    assert config["channel_configs"] == {}
+
+
 def test_ohmo_init_interactive_writes_gateway_config(tmp_path: Path, monkeypatch):
     runner = CliRunner()
     workspace = tmp_path / ".ohmo-home"
@@ -48,7 +64,7 @@ def test_ohmo_init_interactive_writes_gateway_config(tmp_path: Path, monkeypatch
         [
             "1",  # provider profile
             "y",  # enable telegram
-            "*",  # allow_from
+            "123456",  # allow_from
             "telegram-token",
             "y",  # reply_to_message
             "n",  # slack
@@ -64,6 +80,34 @@ def test_ohmo_init_interactive_writes_gateway_config(tmp_path: Path, monkeypatch
     config = json.loads((workspace / "gateway.json").read_text(encoding="utf-8"))
     assert config["enabled_channels"] == ["telegram"]
     assert config["channel_configs"]["telegram"]["token"] == "telegram-token"
+    assert config["channel_configs"]["telegram"]["allow_from"] == ["123456"]
+
+
+def test_ohmo_init_interactive_allows_blank_allow_from_for_secure_default(tmp_path: Path, monkeypatch):
+    runner = CliRunner()
+    workspace = tmp_path / ".ohmo-home"
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+    user_input = "\n".join(
+        [
+            "1",  # provider profile
+            "y",  # enable telegram
+            "",   # allow_from -> deny all until explicitly configured
+            "telegram-token",
+            "y",  # reply_to_message
+            "n",  # slack
+            "n",  # discord
+            "n",  # feishu
+            "y",  # send_progress
+            "y",  # send_tool_hints
+            "n",  # allow_remote_admin_commands
+        ]
+    )
+    result = runner.invoke(app, ["init", "--workspace", str(workspace)], input=user_input)
+    assert result.exit_code == 0
+    config = json.loads((workspace / "gateway.json").read_text(encoding="utf-8"))
+    assert config["channel_configs"]["telegram"]["allow_from"] == []
+    assert "Remote access denied until allow_from is configured for: telegram" in result.output
 
 
 def test_ohmo_init_interactive_writes_feishu_gateway_config(tmp_path: Path, monkeypatch):
@@ -78,7 +122,7 @@ def test_ohmo_init_interactive_writes_feishu_gateway_config(tmp_path: Path, monk
             "n",         # slack
             "n",         # discord
             "y",         # feishu
-            "*",         # allow_from
+            "feishu-user-1",         # allow_from
             "cli_app",   # app_id
             "cli_secret",# app_secret
             "enc_key",   # encrypt_key
@@ -111,12 +155,12 @@ def test_ohmo_config_interactive_can_restart_gateway(tmp_path: Path, monkeypatch
     monkeypatch.setattr("ohmo.cli.start_gateway_process", lambda cwd, workspace: 4321)
     user_input = "\n".join(
         [
-            "4",          # provider profile -> codex
+            _provider_menu_index("codex"),
             "n",          # telegram
             "n",          # slack
             "n",          # discord
             "y",          # feishu
-            "*",          # allow_from
+            "feishu-user-1",          # allow_from
             "cli_app",    # app_id
             "cli_secret", # app_secret
             "",           # encrypt_key
@@ -144,7 +188,7 @@ def test_ohmo_config_keeps_existing_channel_when_not_reconfigured(tmp_path: Path
     config = json.loads(gateway_path.read_text(encoding="utf-8"))
     config["enabled_channels"] = ["feishu"]
     config["channel_configs"]["feishu"] = {
-        "allow_from": ["*"],
+        "allow_from": ["feishu-user-1"],
         "app_id": "old_app",
         "app_secret": "old_secret",
         "encrypt_key": "",
@@ -158,7 +202,7 @@ def test_ohmo_config_keeps_existing_channel_when_not_reconfigured(tmp_path: Path
     monkeypatch.setattr("ohmo.cli.gateway_status", lambda cwd, workspace: type("State", (), {"running": False})())
     user_input = "\n".join(
         [
-            "4",  # provider profile -> codex
+            _provider_menu_index("codex"),
             "n",  # telegram
             "n",  # slack
             "n",  # discord
