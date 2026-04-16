@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import asyncio
 import json
 import re
 import shutil
@@ -1947,11 +1948,13 @@ def create_default_command_registry(
         """Update HanHarness to the latest version via git pull.
         (git pull로 최신 소스를 받아 HanHarness를 업데이트한다.)
         """
-        import subprocess
         import sys
         from pathlib import Path
 
         force = args.strip().lower() == "force"
+        settings = load_settings()
+        git_timeout = max(60.0, float(settings.timeout))
+        install_timeout = max(120.0, float(settings.timeout))
 
         # Resolve the repo root from the editable install location: src/openharness/ → repo root
         # (editable 설치 시 소스 위치: src/openharness/ → repo root)
@@ -1970,20 +1973,42 @@ def create_default_command_registry(
                 )
             )
 
-        def _pip_install() -> str:
+        async def _run_command(command: list[str], *, cwd: Path, timeout: float) -> tuple[int, str]:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=str(cwd),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                return 124, f"Command timed out after {timeout:.0f}s: {' '.join(command)}"
+            output = (
+                stdout.decode("utf-8", errors="replace")
+                + stderr.decode("utf-8", errors="replace")
+            ).strip()
+            return process.returncode or 0, output
+
+        async def _pip_install() -> str:
             """Re-install in editable mode with the current interpreter to pick up dependency changes.
             (현재 인터프리터로 editable 재설치 — 의존성 변경 반영)
             """
-            r = subprocess.run(
+            returncode, output = await _run_command(
                 [sys.executable, "-m", "pip", "install", "-e", str(repo_root), "--quiet"],
-                capture_output=True, text=True, timeout=120,
+                cwd=repo_root,
+                timeout=install_timeout,
             )
-            return (r.stdout + r.stderr).strip()
+            if returncode != 0:
+                return output or f"pip install failed with exit code {returncode}"
+            return output
 
         # Force-reinstall mode: skip git pull, just re-run pip install -e
         # (강제 재설치 모드: git pull 없이 pip install -e만 실행)
         if force:
-            pip_out = _pip_install()
+            pip_out = await _pip_install()
             return CommandResult(
                 message=(
                     "✅ 강제 재설치 완료! 변경사항 적용을 위해 프로그램을 재시작하세요.\n"
@@ -1994,21 +2019,15 @@ def create_default_command_registry(
 
         # git pull
         try:
-            result = subprocess.run(
+            returncode, output = await _run_command(
                 ["git", "pull", "origin", "main"],
-                cwd=str(repo_root),
-                capture_output=True,
-                text=True,
-                timeout=60,
+                cwd=repo_root,
+                timeout=git_timeout,
             )
         except FileNotFoundError:
             return CommandResult(message="❌ git 명령어를 찾을 수 없습니다. git이 설치되어 있는지 확인하세요.")
-        except subprocess.TimeoutExpired:
-            return CommandResult(message="❌ git pull 시간 초과 (60초). 네트워크 상태를 확인하세요.")
 
-        output = (result.stdout + result.stderr).strip()
-
-        if result.returncode != 0:
+        if returncode != 0:
             return CommandResult(message=f"❌ 업데이트 실패:\n```\n{output}\n```")
 
         if "Already up to date" in output:
@@ -2022,7 +2041,7 @@ def create_default_command_registry(
             )
 
         # 변경사항 있음 → pip 재설치 (새 의존성 반영)
-        pip_out = _pip_install()
+        pip_out = await _pip_install()
         return CommandResult(
             message=(
                 "✅ 업데이트 완료! 변경사항 적용을 위해 프로그램을 재시작하세요.\n"

@@ -314,6 +314,15 @@ class ReactBackendHost:
         # (매 턴 전 Hanplanet 토큰 만료 여부를 조용히 확인해 자동 갱신)
         await self._maybe_refresh_hanplanet_token()
 
+        if line.startswith("/"):
+            command_label = line.split(maxsplit=1)[0]
+            await self._emit(
+                BackendEvent(
+                    type="transcript_item",
+                    item=TranscriptItem(role="system", text=f"Running {command_label}..."),
+                )
+            )
+
         should_continue = await handle_line(
             self._bundle,
             line,
@@ -1306,8 +1315,8 @@ class ReactBackendHost:
 
         if group == "anthropic":
             return [
-                {"value": v, "label": l, "description": d, "active": v == current_model}
-                for v, l, d in CLAUDE_MODEL_ALIAS_OPTIONS
+                {"value": value, "label": label, "description": description, "active": value == current_model}
+                for value, label, description in CLAUDE_MODEL_ALIAS_OPTIONS
             ]
 
         if group == "openai":
@@ -1931,7 +1940,9 @@ class ReactBackendHost:
         if getattr(active_profile, "credential_slot", None) != "hanplanet":
             return
         try:
-            import base64, json as _json, time
+            import base64
+            import json as _json
+            import time
             from openharness.auth.storage import load_credential
             token = load_credential("profile:hanplanet", "api_key") or ""
             if not token:

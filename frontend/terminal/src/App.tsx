@@ -200,6 +200,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				session.sendRequest({type: 'submit_line', line: '/plan on'});
 			}
 			session.setBusy(true);
+			session.setBusyLabel('Running /plan...');
 			return true;
 		}
 
@@ -457,6 +458,8 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		setHistoryIndex(-1);
 		setInput('');
 		session.setBusy(true);
+		const commandLabel = value.trim().startsWith('/') ? value.trim().split(/\s+/, 1)[0] : undefined;
+		session.setBusyLabel(commandLabel ? `Running ${commandLabel}...` : undefined);
 	};
 
 	// Scripted automation
