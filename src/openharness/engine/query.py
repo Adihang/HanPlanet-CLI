@@ -43,6 +43,7 @@ REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memo
 TOOL_INPUT_ERROR_PREFIX = "Tool-call input error"
 TOOL_INPUT_RECOVERY_STATUS = "Recovering from invalid tool arguments..."
 MAX_EMPTY_ASSISTANT_RETRIES = 2
+MAX_STREAM_FAILURE_RETRIES = 1
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +72,23 @@ def _is_prompt_too_long_error(exc: Exception) -> bool:
             "too many tokens",
             "too large for the model",
             "maximum context length",
+        )
+    )
+
+
+def _is_network_stream_error_message(message: str) -> bool:
+    text = message.lower()
+    return any(
+        needle in text
+        for needle in (
+            "connect",
+            "timeout",
+            "network",
+            "peer closed connection",
+            "incomplete chunked read",
+            "incomplete message body",
+            "server disconnected",
+            "connection reset",
         )
     )
 
@@ -464,6 +482,7 @@ async def run_query(
 
     turn_count = 0
     empty_assistant_retries = 0
+    stream_failure_retries = 0
     while context.max_turns is None or turn_count < context.max_turns:
         turn_count += 1
         # --- auto-compact check before calling the model ---------------
@@ -474,6 +493,7 @@ async def run_query(
 
         final_message: ConversationMessage | None = None
         usage = UsageSnapshot()
+        streamed_model_output = False
 
         try:
             async for event in context.api_client.stream_message(
@@ -486,6 +506,7 @@ async def run_query(
                 )
             ):
                 if isinstance(event, ApiTextDeltaEvent):
+                    streamed_model_output = True
                     yield AssistantTextDelta(text=event.text), None
                     continue
                 if isinstance(event, ApiRetryEvent):
@@ -512,7 +533,22 @@ async def run_query(
                 messages, was_compacted = last_compaction_result
                 if was_compacted:
                     continue
-            if "connect" in error_msg.lower() or "timeout" in error_msg.lower() or "network" in error_msg.lower():
+            is_network_stream_error = _is_network_stream_error_message(error_msg)
+            if (
+                is_network_stream_error
+                and not streamed_model_output
+                and stream_failure_retries < MAX_STREAM_FAILURE_RETRIES
+            ):
+                stream_failure_retries += 1
+                yield StatusEvent(
+                    message=(
+                        "Network stream failed after provider retries. "
+                        f"Retrying request ({stream_failure_retries}/{MAX_STREAM_FAILURE_RETRIES})..."
+                    )
+                ), None
+                turn_count -= 1
+                continue
+            if is_network_stream_error:
                 yield ErrorEvent(message=f"Network error: {error_msg}. Check your internet connection and try again."), None
             else:
                 yield ErrorEvent(message=f"API error: {error_msg}"), None
@@ -520,6 +556,8 @@ async def run_query(
 
         if final_message is None:
             raise RuntimeError("Model stream finished without a final message")
+
+        stream_failure_retries = 0
 
         coordinator_context_message: ConversationMessage | None = None
         if context.system_prompt.startswith("You are a **coordinator**."):

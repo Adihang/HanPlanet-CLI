@@ -105,6 +105,35 @@ class RetryThenSuccessApiClient:
         )
 
 
+class NetworkFailureThenSuccessApiClient:
+    def __init__(self) -> None:
+        self.requests = []
+        self._calls = 0
+
+    async def stream_message(self, request):
+        self.requests.append(request)
+        self._calls += 1
+        if self._calls == 1:
+            raise RequestFailure("peer closed connection without sending complete message body (incomplete chunked read)")
+        yield ApiTextDeltaEvent(text="after stream retry")
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="after stream retry")]),
+            usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            stop_reason=None,
+        )
+
+
+class AlwaysNetworkFailureApiClient:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def stream_message(self, request):
+        self.requests.append(request)
+        if False:
+            yield None
+        raise RequestFailure("peer closed connection without sending complete message body (incomplete chunked read)")
+
+
 class PromptTooLongThenSuccessApiClient:
     def __init__(self) -> None:
         self._calls = 0
@@ -483,6 +512,54 @@ async def test_query_engine_surfaces_retry_status_events(tmp_path: Path):
 
     assert any(isinstance(event, StatusEvent) and "retrying in 1.5s" in event.message for event in events)
     assert isinstance(events[-1], AssistantTurnComplete)
+
+
+@pytest.mark.asyncio
+async def test_query_engine_retries_network_stream_failure_before_output(tmp_path: Path):
+    api_client = NetworkFailureThenSuccessApiClient()
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("hello")]
+
+    assert any(
+        isinstance(event, StatusEvent)
+        and "Network stream failed after provider retries. Retrying request (1/1)" in event.message
+        for event in events
+    )
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "after stream retry"
+    assert len(api_client.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_query_engine_errors_after_network_stream_retry(tmp_path: Path):
+    api_client = AlwaysNetworkFailureApiClient()
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("hello")]
+
+    assert any(
+        isinstance(event, StatusEvent)
+        and "Network stream failed after provider retries. Retrying request (1/1)" in event.message
+        for event in events
+    )
+    assert any(isinstance(event, ErrorEvent) and "Network error: peer closed connection" in event.message for event in events)
+    assert not any(isinstance(event, AssistantTurnComplete) for event in events)
+    assert len(api_client.requests) == 2
 
 
 @pytest.mark.asyncio
