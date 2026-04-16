@@ -66,3 +66,21 @@ def test_build_system_prompt_default_includes_base():
     env = _make_env()
     prompt = build_system_prompt(env=env)
     assert "HanHarness" in prompt
+
+
+def test_build_system_prompt_allows_standard_developer_commands():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+    assert "It is acceptable to use Bash for standard developer commands" in prompt
+    assert "`ls`" in prompt
+    assert "`rg`" in prompt
+    assert "`git status`" in prompt
+    assert "`mv`" in prompt
+    assert "Do NOT use Bash" not in prompt
+
+
+def test_build_system_prompt_requires_inspection_before_modification():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+    assert "Do not guess project structure" in prompt
+    assert "Before modifying a file, verify its current contents" in prompt
