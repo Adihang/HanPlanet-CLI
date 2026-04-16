@@ -36,6 +36,7 @@ pipx ensurepath
 pipx --version
 
 pipx install -e .
+pipx install --force --editable .
 pipx upgrade HanHarness
 ```
 
