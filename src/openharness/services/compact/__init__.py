@@ -108,7 +108,7 @@ class CompactionResult:
 # Set OLLAMA_NUM_CTX to match the value configured in the Ollama/Hanplanet proxy
 # so the auto-compact threshold is calculated correctly.  0 = disabled (use default fallback).
 # (Ollama 로컬 모델의 실제 컨텍스트 크기. OLLAMA_NUM_CTX 환경변수로 auto-compact 임계값 조정. 0이면 비활성화.)
-import os as _os
+import os as _os  # noqa: E402
 _OLLAMA_NUM_CTX = int(_os.environ.get("OLLAMA_NUM_CTX", 0))
 
 
