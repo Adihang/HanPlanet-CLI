@@ -652,6 +652,23 @@ git tag v*.*.* && git push origin v*.*.*
 | `git tag v*.*.* && git push origin v*.*.*` | ✅ | ✅ | ✅ |
 | GitHub Actions → `Run workflow` (수동) | ✅ | ❌ | ✅ |
 
+수동 트리거는 GitHub CLI로도 실행할 수 있다.
+
+```bash
+gh workflow run "Build Standalone" --repo Adihang/HanHarness --ref main
+gh run list --repo Adihang/HanHarness --workflow "Build Standalone" --limit 5
+gh run watch --repo Adihang/HanHarness
+```
+
+워크플로우 내부 빌드 명령:
+
+```bash
+uv run python scripts/build_standalone.py --clean --skip-frontend-install
+```
+
+Windows artifact(`HanPlanet-CLI-windows-x64.zip`) 안의 실행 파일은 `dist\HanPlanet-CLI\hanplanet.exe` 이다.
+Windows는 macOS/Linux처럼 shell alias가 자동으로 생기지 않으므로 `hanplanet.exe`를 직접 실행한다.
+
 #### 정식 배포 절차
 
 ```bash
