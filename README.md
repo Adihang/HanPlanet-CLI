@@ -42,6 +42,36 @@ pipx upgrade HanHarness
 
 설치 후 `hanplanet` or `oh` 명령어로 실행.
 
+### Python 없이 실행하는 standalone 패키징
+
+대상 PC에 Python, pip, pipx, Node.js 없이 실행할 수 있는 패키지를 만든다.
+Node 런타임은 기본으로 같이 번들된다.
+
+```bash
+uv sync --extra dev --extra standalone
+uv run python scripts/package_hanharness_hdd.py
+```
+
+생성 위치:
+
+```text
+/Volumes/HANPLANET_HDD/Hanplanet/hanharness
+```
+
+프론트엔드 의존성을 이미 설치해 둔 상태에서 빠르게 다시 패키징하려면:
+
+```bash
+uv run python scripts/package_hanharness_hdd.py --skip-frontend-install
+```
+
+일반 standalone 빌드만 필요하면:
+
+```bash
+uv run python scripts/build_standalone.py --clean
+```
+
+자세한 내용은 `docs/STANDALONE.md` 참고.
+
 > **개발 중 소스 코드 직접 참조 (pipx 환경)**
 >
 > pipx venv에서 소스 코드 변경이 즉시 반영되려면 `.pth` 파일을 추가한다.
