@@ -1,3 +1,4 @@
+import chalk from 'chalk';
 import React from 'react';
 import {Box, Text} from 'ink';
 
@@ -6,13 +7,13 @@ import {useTheme} from '../theme/ThemeContext.js';
 const VERSION = '0.1.0';
 
 // prettier-ignore
-const LOGO = [
-	'██╗  ██╗  █████╗  ███╗   ██╗ ██████╗  ██╗       █████╗  ███╗   ██╗ ███████╗ ████████╗',
-	'██║  ██║ ██╔══██╗ ████╗  ██║ ██╔══██╗ ██║      ██╔══██╗ ████╗  ██║ ██╔════╝ ╚══██╔══╝',
-	'███████║ ███████║ ██╔██╗ ██║ ██████╔╝ ██║      ███████║ ██╔██╗ ██║ █████╗      ██║   ',
-	'██╔══██║ ██╔══██║ ██║╚██╗██║ ██╔═══╝  ██║      ██╔══██║ ██║╚██╗██║ ██╔══╝      ██║   ',
-	'██║  ██║ ██║  ██║ ██║ ╚████║ ██║      ███████╗ ██║  ██║ ██║ ╚████║ ███████╗    ██║   ',
-	'╚═╝  ╚═╝ ╚═╝  ╚═╝ ╚═╝  ╚═══╝ ╚═╝      ╚══════╝ ╚═╝  ╚═╝ ╚═╝  ╚═══╝ ╚══════╝    ╚═╝   ',
+const LOGO: Array<[string, number]> = [
+	[' ██╗  ██╗  █████╗  ███╗   ██╗ ██████╗  ██╗       █████╗  ███╗   ██╗ ███████╗ ████████╗', 18],
+	[' ██║  ██║ ██╔══██╗ ████╗  ██║ ██╔══██╗ ██║      ██╔══██╗ ████╗  ██║ ██╔════╝ ╚══██╔══╝', 19],
+	[' ███████║ ███████║ ██╔██╗ ██║ ██████╔╝ ██║      ███████║ ██╔██╗ ██║ █████╗      ██║   ', 20],
+	[' ██╔══██║ ██╔══██║ ██║╚██╗██║ ██╔═══╝  ██║      ██╔══██║ ██║╚██╗██║ ██╔══╝      ██║   ', 21],
+	[' ██║  ██║ ██║  ██║ ██║ ╚████║ ██║      ███████╗ ██║  ██║ ██║ ╚████║ ███████╗    ██║   ', 27],
+	[' ╚═╝  ╚═╝ ╚═╝  ╚═╝ ╚═╝  ╚═══╝ ╚═╝      ╚══════╝ ╚═╝  ╚═╝ ╚═╝  ╚═══╝ ╚══════╝    ╚═╝  ', 33],
 ];
 
 export function WelcomeBanner(): React.JSX.Element {
@@ -21,9 +22,13 @@ export function WelcomeBanner(): React.JSX.Element {
 	return (
 		<Box flexDirection="column" marginBottom={1}>
 			<Box flexDirection="column" paddingX={0}>
-				{LOGO.map((line, i) => (
-					<Text key={i} color={theme.colors.primary} bold>{line}</Text>
+				{LOGO.map(([line, color], i) => (
+					<Text key={i}>{chalk.ansi256(color)(line)}</Text>
 				))}
+				<Text> </Text>
+				<Text>
+					<Text>{chalk.ansi256(39)('              HanPlanet CLI')}</Text>
+				</Text>
 				<Text> </Text>
 				<Text>
 					<Text dimColor> www.hanplanet.com</Text>
