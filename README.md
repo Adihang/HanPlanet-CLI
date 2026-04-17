@@ -38,6 +38,7 @@ pipx --version
 pipx install -e .
 pipx install --force --editable .
 pipx upgrade HanHarness
+pipx uninstall HanHarness
 ```
 
 설치 후 `hanplanet` or `oh` 명령어로 실행.
