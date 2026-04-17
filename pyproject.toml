@@ -49,7 +49,7 @@ standalone = [
 ]
 
 [project.scripts]
-hanharness = "openharness.cli:app"
+hanplanet = "openharness.cli:app"
 oh = "openharness.cli:app"
 openh = "openharness.cli:app"
 ohmo = "ohmo.cli:app"
