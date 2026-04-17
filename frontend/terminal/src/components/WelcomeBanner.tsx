@@ -3,8 +3,6 @@ import {Box, Text} from 'ink';
 
 import {useTheme} from '../theme/ThemeContext.js';
 
-const VERSION = '0.1.0';
-
 // ansi256 → hex: colors 18-33 are in the 6×6×6 cube (index = n-16)
 // prettier-ignore
 const LOGO: Array<[string, string]> = [
@@ -27,12 +25,7 @@ export function WelcomeBanner(): React.JSX.Element {
 				))}
 				<Text> </Text>
 				<Text>
-					<Text color="#00afff">{'              HanPlanet CLI'}</Text>
-				</Text>
-				<Text> </Text>
-				<Text>
 					<Text dimColor> www.hanplanet.com</Text>
-					<Text dimColor>{'  '}v{VERSION}</Text>
 				</Text>
 				<Text> </Text>
 				<Text>

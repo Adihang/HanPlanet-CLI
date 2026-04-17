@@ -27,10 +27,10 @@ def _version_callback(value: bool) -> None:
 
 
 app = typer.Typer(
-    name="openharness",
+    name="hanplanet",
     help=(
-        "Oh my Harness! An AI-powered coding assistant.\n\n"
-        "Starts an interactive session by default, use -p/--print for non-interactive output."
+        "HanPlanet CLI - an AI coding assistant for terminal-based development.\n\n"
+        "Starts an interactive TUI session by default. Use -p/--print to run one prompt and exit."
     ),
     add_completion=False,
     rich_markup_mode="rich",
@@ -1430,7 +1430,7 @@ def main(
         None,
         "--model",
         "-m",
-        help="Model alias (e.g. 'sonnet', 'opus') or full model ID",
+        help="Model alias or full model ID (for example: kimi-k2.5, gpt-5.1, claude-sonnet-4-6)",
         rich_help_panel="Model & Effort",
     ),
     effort: str | None = typer.Option(
@@ -1513,7 +1513,7 @@ def main(
     base_url: str | None = typer.Option(
         None,
         "--base-url",
-        help="Anthropic-compatible API base URL",
+        help="Compatible API base URL for the selected provider/profile",
         rich_help_panel="System & Context",
     ),
     api_key: str | None = typer.Option(
@@ -1532,7 +1532,7 @@ def main(
     api_format: str | None = typer.Option(
         None,
         "--api-format",
-        help="API format: 'anthropic' (default), 'openai' (DashScope, GitHub Models, etc.), or 'copilot' (GitHub Copilot)",
+        help="API format: anthropic, openai/openai_compat, or copilot",
         rich_help_panel="System & Context",
     ),
     theme: str | None = typer.Option(

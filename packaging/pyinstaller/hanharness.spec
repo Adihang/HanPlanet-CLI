@@ -67,7 +67,7 @@ hanplanet_cli_exe = EXE(
     hanplanet_cli_analysis.scripts,
     [],
     exclude_binaries=True,
-    name="HanPlanet-CLI",
+    name="hanplanet",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
