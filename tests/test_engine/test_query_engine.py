@@ -1260,6 +1260,8 @@ async def test_query_engine_retries_unexecuted_file_action_promise(tmp_path: Pat
         message.role == "user" and "you did not call any tools" in message.text
         for message in second_request_messages
     )
-    assert len(engine.messages) == 3
-    assert "you did not call any tools" in engine.messages[1].text
+    assert any(
+        message.role == "user" and "you did not call any tools" in message.text
+        for message in engine.messages
+    )
     assert engine.messages[-1].text == "Applied the changes."

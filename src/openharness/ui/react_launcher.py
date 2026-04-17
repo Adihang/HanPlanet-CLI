@@ -24,6 +24,32 @@ def _resolve_npm() -> str:
     return shutil.which("npm") or "npm"
 
 
+def _bundled_node_dir() -> Path | None:
+    """Return a bundled Node.js bin directory when present in a standalone build."""
+    base = Path(__file__).resolve().parent.parent / "_node"
+    candidates = [base]
+    if sys.platform == "win32":
+        candidates.append(base / "node-vendored")
+    else:
+        candidates.extend([base / "bin", base / "node-vendored" / "bin"])
+    for candidate in candidates:
+        node_name = "node.exe" if sys.platform == "win32" else "node"
+        if (candidate / node_name).exists():
+            return candidate
+    return None
+
+
+def _with_bundled_node_path(env: dict[str, str] | None = None) -> dict[str, str]:
+    """Return an environment with bundled Node.js prepended to PATH when available."""
+    updated = dict(env or os.environ)
+    node_dir = _bundled_node_dir()
+    if node_dir is None:
+        return updated
+    existing = updated.get("PATH", "")
+    updated["PATH"] = str(node_dir) if not existing else f"{node_dir}{os.pathsep}{existing}"
+    return updated
+
+
 def _resolve_tsx(frontend_dir: Path) -> tuple[str, ...]:
     """Resolve the tsx command to invoke directly, bypassing ``npm exec``.
 
@@ -90,7 +116,10 @@ def build_backend_command(
     permission_mode: str | None = None,
 ) -> list[str]:
     """Return the command used by the React frontend to spawn the backend host."""
-    command = [sys.executable, "-m", "openharness", "--backend-only"]
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, "--backend-only"]
+    else:
+        command = [sys.executable, "-m", "openharness", "--backend-only"]
     if cwd:
         command.extend(["--cwd", cwd])
     if model:
@@ -171,7 +200,7 @@ async def launch_react_tui(
         _con.print("[bold green]✅  설치 완료![/bold green]")
         _con.print()
 
-    env = os.environ.copy()
+    env = _with_bundled_node_path(os.environ.copy())
     env["OPENHARNESS_FRONTEND_CONFIG"] = json.dumps(
         {
             "backend_command": build_backend_command(

@@ -34,6 +34,17 @@ def test_build_backend_command_includes_flags():
     assert "--api-key" in command
 
 
+def test_build_backend_command_uses_self_executable_when_frozen(monkeypatch):
+    monkeypatch.setattr("openharness.ui.react_launcher.sys.frozen", True, raising=False)
+    monkeypatch.setattr("openharness.ui.react_launcher.sys.executable", "/opt/HanHarness/hanharness")
+
+    command = build_backend_command(cwd="/tmp/demo")
+
+    assert command[:2] == ["/opt/HanHarness/hanharness", "--backend-only"]
+    assert "-m" not in command
+    assert "openharness" not in command
+
+
 @pytest.mark.asyncio
 async def test_run_repl_uses_react_launcher_by_default(monkeypatch):
     seen = {}

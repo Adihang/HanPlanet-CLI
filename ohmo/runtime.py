@@ -12,7 +12,7 @@ from openharness.api.client import SupportsStreamingMessages
 from openharness.engine.stream_events import AssistantTextDelta, AssistantTurnComplete, CompactProgressEvent, ErrorEvent, StatusEvent
 from openharness.ui.backend_host import run_backend_host
 from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
-from openharness.ui.react_launcher import _resolve_npm, _resolve_tsx, get_frontend_dir
+from openharness.ui.react_launcher import _resolve_npm, _resolve_tsx, _with_bundled_node_path, get_frontend_dir
 
 from ohmo.prompts import build_ohmo_system_prompt
 from ohmo.session_storage import OhmoSessionBackend
@@ -66,7 +66,10 @@ def build_ohmo_backend_command(
     provider_profile: str | None = None,
 ) -> list[str]:
     """Return the backend command for the React terminal UI."""
-    command = [sys.executable, "-m", "ohmo", "--backend-only"]
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, "--backend-only"]
+    else:
+        command = [sys.executable, "-m", "ohmo", "--backend-only"]
     if cwd:
         command.extend(["--cwd", cwd])
     if workspace:
@@ -108,7 +111,7 @@ async def launch_ohmo_react_tui(
 
     cwd_path = str(Path(cwd or Path.cwd()).resolve())
     workspace_root = initialize_workspace(workspace)
-    env = os.environ.copy()
+    env = _with_bundled_node_path(os.environ.copy())
     env["OPENHARNESS_FRONTEND_CONFIG"] = json.dumps(
         {
             "backend_command": build_ohmo_backend_command(

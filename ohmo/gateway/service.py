@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _ohmo_cli_command(*args: str) -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, *args]
+    return [sys.executable, "-m", "ohmo", *args]
+
+
 class OhmoGatewayService:
     """Foreground/background service wrapper for the personal gateway."""
 
@@ -107,17 +113,14 @@ class OhmoGatewayService:
 
     def _exec_restart(self) -> None:
         root = str(get_workspace_root(self._workspace))
-        argv = [
-            sys.executable,
-            "-m",
-            "ohmo",
+        argv = _ohmo_cli_command(
             "gateway",
             "run",
             "--cwd",
             self._cwd,
             "--workspace",
             root,
-        ]
+        )
         logger.info("ohmo gateway restarting in-place argv=%s", argv)
         os.execv(sys.executable, argv)
 
@@ -207,17 +210,14 @@ def start_gateway_process(cwd: str | Path | None = None, workspace: str | Path |
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     with service.log_file.open("a", encoding="utf-8") as log_file:
         process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "ohmo",
+            _ohmo_cli_command(
                 "gateway",
                 "run",
                 "--cwd",
                 service._cwd,
                 "--workspace",
                 str(get_workspace_root(workspace)),
-            ],
+            ),
             cwd=service._cwd,
             stdout=log_file,
             stderr=log_file,

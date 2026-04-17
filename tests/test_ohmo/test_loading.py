@@ -6,7 +6,7 @@ from openharness.config.settings import load_settings
 from openharness.plugins import load_plugins
 from openharness.skills import load_skill_registry
 
-from ohmo.runtime import run_ohmo_backend
+from ohmo.runtime import build_ohmo_backend_command, run_ohmo_backend
 from ohmo.workspace import get_plugins_dir, get_skills_dir, initialize_workspace
 
 
@@ -144,6 +144,17 @@ def test_run_ohmo_backend_passes_private_skill_and_plugin_roots(tmp_path, monkey
     assert result == 0
     assert captured["extra_skill_dirs"] == (str(get_skills_dir(workspace)),)
     assert captured["extra_plugin_roots"] == (str(get_plugins_dir(workspace)),)
+
+
+def test_build_ohmo_backend_command_uses_self_executable_when_frozen(monkeypatch):
+    monkeypatch.setattr("ohmo.runtime.sys.frozen", True, raising=False)
+    monkeypatch.setattr("ohmo.runtime.sys.executable", "/opt/HanHarness/ohmo")
+
+    command = build_ohmo_backend_command(cwd="/tmp/demo")
+
+    assert command[:2] == ["/opt/HanHarness/ohmo", "--backend-only"]
+    assert "-m" not in command
+    assert "ohmo" not in command[1:]
 
 
 def test_plugin_loader_supports_directory_skill_layout(tmp_path, monkeypatch):
