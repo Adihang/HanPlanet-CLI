@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+# ruff: noqa: F821
 """PyInstaller spec for HanHarness standalone builds.
 
 Build from the repository root with:
@@ -66,7 +67,7 @@ hanharness_exe = EXE(
     hanharness_analysis.scripts,
     [],
     exclude_binaries=True,
-    name="hanharness",
+    name="HanPlanet-CLI",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

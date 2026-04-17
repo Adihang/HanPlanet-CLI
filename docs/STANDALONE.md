@@ -26,7 +26,7 @@ The output is:
 
 ```text
 dist/HanHarness/
-  hanharness
+  HanPlanet-CLI
   ohmo
   _internal/
 ```
@@ -34,9 +34,9 @@ dist/HanHarness/
 Run it:
 
 ```bash
-./dist/HanHarness/hanharness --version
-./dist/HanHarness/hanharness -p "hello"
-./dist/HanHarness/hanharness
+./dist/HanHarness/HanPlanet-CLI --version
+./dist/HanHarness/HanPlanet-CLI -p "hello"
+./dist/HanHarness/HanPlanet-CLI
 ```
 
 ## Build On Windows
@@ -46,7 +46,7 @@ Run this on Windows, not macOS. PyInstaller builds are platform-specific.
 ```powershell
 uv sync --extra dev --extra standalone
 uv run python scripts/build_standalone.py --clean
-.\dist\HanHarness\hanharness.exe --version
+.\dist\HanHarness\HanPlanet-CLI.exe --version
 ```
 
 ## Bundling Node.js
@@ -68,7 +68,7 @@ work without Node:
 
 ```bash
 uv run python scripts/build_standalone.py --clean --no-bundle-node
-./dist/HanHarness/hanharness -p "hello"
+./dist/HanHarness/HanPlanet-CLI -p "hello"
 ```
 
 To use a pre-downloaded Node.js runtime instead of the automatic download, pass
