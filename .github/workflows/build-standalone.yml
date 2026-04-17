@@ -1,0 +1,75 @@
+name: Build Standalone
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            platform: macos-arm64
+            archive_cmd: zip -r HanPlanet-CLI-macos-arm64.zip dist/HanPlanet-CLI
+          - os: windows-latest
+            platform: windows-x64
+            archive_cmd: Compress-Archive -Path dist\HanPlanet-CLI -DestinationPath HanPlanet-CLI-windows-x64.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --extra dev --extra standalone
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/terminal/package-lock.json
+
+      - name: Build standalone
+        run: uv run python scripts/build_standalone.py --clean
+
+      - name: Archive build
+        run: ${{ matrix.archive_cmd }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HanPlanet-CLI-${{ matrix.platform }}
+          path: HanPlanet-CLI-${{ matrix.platform }}.zip
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            HanPlanet-CLI-macos-arm64/HanPlanet-CLI-macos-arm64.zip
+            HanPlanet-CLI-windows-x64/HanPlanet-CLI-windows-x64.zip
+          generate_release_notes: true
