@@ -11,7 +11,7 @@ under `frontend/terminal`. A practical desktop distribution therefore needs:
 - the Python runtime and Python dependencies;
 - HanHarness and ohmo entry points;
 - `frontend/terminal` assets and `node_modules`;
-- Node.js on the user's `PATH`, or a bundled Node.js runtime.
+- a bundled Node.js runtime for the React TUI.
 
 For this reason, `onedir` is preferred over `onefile`.
 
@@ -51,16 +51,28 @@ uv run python scripts/build_standalone.py --clean
 
 ## Bundling Node.js
 
-If you do not bundle Node.js, the target machine needs `node` available on
-`PATH` for the default React TUI. Non-interactive mode can still work without
-Node:
+Node.js is bundled by default. The build script downloads the matching Node.js
+runtime for the current build platform into `.standalone-cache/node/` and passes
+it to PyInstaller automatically.
+
+The default Node.js version is pinned in `scripts/build_standalone.py`. Override
+it when needed:
 
 ```bash
-hanharness -p "hello"
+uv run python scripts/build_standalone.py --clean --node-version 22.13.1
 ```
 
-To bundle Node.js, download the matching Node.js distribution for the build
-platform and pass its root or `bin` directory:
+If you intentionally do not bundle Node.js, the target machine needs `node`
+available on `PATH` for the default React TUI. Non-interactive mode can still
+work without Node:
+
+```bash
+uv run python scripts/build_standalone.py --clean --no-bundle-node
+./dist/HanHarness/hanharness -p "hello"
+```
+
+To use a pre-downloaded Node.js runtime instead of the automatic download, pass
+the Node distribution root or `bin` directory:
 
 ```bash
 uv run python scripts/build_standalone.py --clean --node-dir /path/to/node-v20.x/bin
