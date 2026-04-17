@@ -622,26 +622,58 @@ OpenAI SDK 예외에서 `str(exc)`가 빈 문자열을 반환하는 경우(`"API
 
 ---
 
-### GitHub Actions 자동 빌드
+### GitHub Actions 자동 빌드 및 배포
 
 **파일:** `.github/workflows/build-standalone.yml`
 
-버전 태그 push 또는 수동 트리거로 macOS (Apple Silicon) + Windows (x64) 스탠드얼론 빌드를 병렬 생성.
+버전 태그 push 또는 수동 트리거로 macOS (Apple Silicon) + Windows (x64) 스탠드얼론 빌드를 자동 생성하고, 로컬 맥의 self-hosted runner가 HDD에 자동 배포한다.
 
-**트리거:**
-- `git tag v*.*.*` + `git push origin v*.*.*` → 자동 빌드 + GitHub Release 생성
-- GitHub Actions → `Build Standalone` → `Run workflow` → 수동 실행 (아티팩트만 생성)
+#### 전체 파이프라인
 
-**빌드 매트릭스:**
+```
+git tag v*.*.* && git push origin v*.*.*
+  │
+  ├─ Build (macos-14)      → HanPlanet-CLI-macos-arm64.zip  ─┐
+  ├─ Build (windows-latest) → HanPlanet-CLI-windows-x64.zip  ─┤
+  │                                                            │
+  ├─ Release (태그일 때만)  → GitHub Releases에 두 zip 첨부   │
+  │                                                            │
+  └─ Deploy (self-hosted)  ← 두 zip 다운로드                  ┘
+       │
+       └─ /Volumes/HANPLANET_HDD/Hanplanet/HanPlanet-CLI/
+              ├── HanPlanet-CLI-macos-arm64.zip
+              └── HanPlanet-CLI-windows-x64.zip
+```
 
-| Runner | 출력 파일 |
-|--------|-----------|
-| `macos-14` (Apple Silicon) | `HanPlanet-CLI-macos-arm64.zip` |
-| `windows-latest` (x64) | `HanPlanet-CLI-windows-x64.zip` |
+#### 트리거
 
-각 플랫폼 빌드는 독립 실행 가능한 디렉토리 (`dist/HanPlanet-CLI/`) 를 zip으로 묶어 아티팩트 업로드. 태그 트리거 시 두 zip을 GitHub Release에 첨부.
+| 방법 | 빌드 | Release 생성 | HDD 배포 |
+|------|------|-------------|---------|
+| `git tag v*.*.* && git push origin v*.*.*` | ✅ | ✅ | ✅ |
+| GitHub Actions → `Run workflow` (수동) | ✅ | ❌ | ✅ |
 
-**로컬 빌드 (HDD 패키징):**
+#### 정식 배포 절차
+
+```bash
+# pyproject.toml 버전 올린 뒤
+git tag v0.1.8
+git push origin v0.1.8
+# → 빌드 완료 후 GitHub Release 생성 + HDD 자동 업데이트
+```
+
+#### self-hosted runner
+
+HDD 배포는 로컬 맥에 설치된 self-hosted runner(`macbook-local`)가 수행한다.
+
+- 설치 위치: `~/actions-runner/`
+- launchd 서비스로 등록 — 맥 재시작 후 자동 기동
+- 상태 확인: `~/actions-runner/svc.sh status`
+- 수동 재시작: `~/actions-runner/svc.sh stop && ~/actions-runner/svc.sh start`
+
+> runner가 꺼져 있거나 HDD가 마운트되지 않으면 Deploy job이 실패한다.  
+> build/release job은 runner 상태와 무관하게 정상 완료된다.
+
+**로컬 빌드 (HDD 직접 패키징, CI 없이):**
 ```bash
 # macOS에서 HDD로 직접 패키징
 uv run python scripts/package_hanplanet_cli_hdd.py
