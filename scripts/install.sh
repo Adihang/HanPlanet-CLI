@@ -82,8 +82,8 @@ done
 echo ""
 echo -e "${BOLD}${CYAN}  ██████╗ ██╗  ██╗${RESET}"
 echo -e "${BOLD}${CYAN} ██╔═══██╗██║  ██║${RESET}"
-echo -e "${BOLD}${CYAN} ██║   ██║███████║${RESET}   HanHarness Installer"
-echo -e "${BOLD}${CYAN} ██║   ██║██╔══██║${RESET}   Han Agent Harness"
+echo -e "${BOLD}${CYAN} ██║   ██║███████║${RESET}   HanPlanet CLI Installer"
+echo -e "${BOLD}${CYAN} ██║   ██║██╔══██║${RESET}   HanPlanet CLI"
 echo -e "${BOLD}${CYAN} ╚██████╔╝██║  ██║${RESET}"
 echo -e "${BOLD}${CYAN}  ╚═════╝ ╚═╝  ╚═╝${RESET}"
 echo ""
@@ -204,9 +204,9 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 4: Install HanHarness
+# Step 4: Install HanPlanet CLI
 # ---------------------------------------------------------------------------
-step "Installing HanHarness"
+step "Installing HanPlanet CLI"
 
 REPO_URL="https://github.com/HKUDS/OpenHarness.git"
 INSTALL_DIR="$HOME/.openharness-src"
@@ -239,7 +239,7 @@ if [ "$FROM_SOURCE" = true ]; then
             info "Source directory exists, pulling latest changes..."
             git -C "$INSTALL_DIR" pull --ff-only
         else
-            info "Cloning HanHarness into ${INSTALL_DIR}..."
+            info "Cloning HanPlanet CLI into ${INSTALL_DIR}..."
             git clone "$REPO_URL" "$INSTALL_DIR"
         fi
     else
@@ -255,11 +255,11 @@ if [ "$FROM_SOURCE" = true ]; then
     info "Installing in editable mode (pip install -e .)..."
     $PIP_CMD install -e "$INSTALL_DIR" --quiet
 else
-    info "Mode: pip install HanHarness"
-    $PIP_CMD install HanHarness --quiet --upgrade
+    info "Mode: pip install HanPlanet-CLI"
+    $PIP_CMD install HanPlanet-CLI --quiet --upgrade
 fi
 
-success "HanHarness package installed"
+success "HanPlanet CLI package installed"
 
 # ---------------------------------------------------------------------------
 # Step 5: Channel dependencies
@@ -291,9 +291,9 @@ if [ "$NODE_OK" = true ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 7: Create HanHarness config directory
+# Step 7: Create HanPlanet CLI config directory
 # ---------------------------------------------------------------------------
-step "Setting up HanHarness config directory"
+step "Setting up HanPlanet CLI config directory"
 
 mkdir -p "$HOME/.openharness"
 mkdir -p "$HOME/.openharness/skills"
@@ -333,7 +333,7 @@ step "Setting up shell integration"
 ACTIVATION_LINE="export PATH=\"$VENV_DIR/bin:\$PATH\""
 FISH_CONFIG="$HOME/.config/fish/config.fish"
 FISH_BLOCK=$(cat <<EOF
-# HanHarness
+# HanPlanet CLI
 if not contains -- "$VENV_DIR/bin" \$PATH
     set -gx PATH "$VENV_DIR/bin" \$PATH
 end
@@ -353,7 +353,7 @@ append_shell_path() {
         return
     fi
     echo "" >> "$rc_file"
-    echo "# HanHarness" >> "$rc_file"
+    echo "# HanPlanet CLI" >> "$rc_file"
     echo "$ACTIVATION_LINE" >> "$rc_file"
     success "Added $VENV_DIR/bin to PATH in $(basename "$rc_file")"
     configured_any=true
@@ -383,7 +383,7 @@ fi
 # Done
 # ---------------------------------------------------------------------------
 echo ""
-echo -e "${BOLD}${GREEN}HanHarness is installed!${RESET}"
+echo -e "${BOLD}${GREEN}HanPlanet CLI is installed!${RESET}"
 echo ""
 echo "  Next steps:"
 echo "    1. Restart shell, or reload your shell config:"

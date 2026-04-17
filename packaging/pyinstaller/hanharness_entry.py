@@ -1,4 +1,4 @@
-"""PyInstaller entry point for the HanHarness CLI."""
+"""PyInstaller entry point for the HanPlanet CLI."""
 
 from openharness.cli import app
 

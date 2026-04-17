@@ -22,7 +22,7 @@ def _safe_short(text: str, *, limit: int = 140) -> str:
 
 def _version_callback(value: bool) -> None:
     if value:
-        print(f"HanHarness {__version__}")
+        print(f"HanPlanet CLI {__version__}")
         raise typer.Exit()
 
 

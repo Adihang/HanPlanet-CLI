@@ -1,12 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 # ruff: noqa: F821
-"""PyInstaller spec for HanHarness standalone builds.
+"""PyInstaller spec for HanPlanet CLI standalone builds.
 
 Build from the repository root with:
     pyinstaller --clean --noconfirm packaging/pyinstaller/hanharness.spec
 
 Optional:
-    HANHARNESS_BUNDLED_NODE_DIR=/path/to/node-or-node/bin pyinstaller ...
+    HANPLANET_CLI_BUNDLED_NODE_DIR=/path/to/node-or-node/bin pyinstaller ...
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ def _datas() -> list[tuple[str, str]]:
         if source.exists():
             datas.append((str(source), target))
 
-    node_dir = os.environ.get("HANHARNESS_BUNDLED_NODE_DIR", "").strip()
+    node_dir = os.environ.get("HANPLANET_CLI_BUNDLED_NODE_DIR", "").strip()
     if node_dir:
         path = Path(node_dir).expanduser().resolve()
         if path.exists():
@@ -48,7 +48,7 @@ hiddenimports = sorted(
 )
 
 
-hanharness_analysis = Analysis(
+hanplanet_cli_analysis = Analysis(
     [str(ROOT / "packaging" / "pyinstaller" / "hanharness_entry.py")],
     pathex=[str(ROOT), str(ROOT / "src")],
     binaries=[],
@@ -61,10 +61,10 @@ hanharness_analysis = Analysis(
     noarchive=False,
     optimize=0,
 )
-hanharness_pyz = PYZ(hanharness_analysis.pure)
-hanharness_exe = EXE(
-    hanharness_pyz,
-    hanharness_analysis.scripts,
+hanplanet_cli_pyz = PYZ(hanplanet_cli_analysis.pure)
+hanplanet_cli_exe = EXE(
+    hanplanet_cli_pyz,
+    hanplanet_cli_analysis.scripts,
     [],
     exclude_binaries=True,
     name="HanPlanet-CLI",
@@ -103,14 +103,14 @@ ohmo_exe = EXE(
 )
 
 coll = COLLECT(
-    hanharness_exe,
+    hanplanet_cli_exe,
     ohmo_exe,
-    hanharness_analysis.binaries,
-    hanharness_analysis.datas,
+    hanplanet_cli_analysis.binaries,
+    hanplanet_cli_analysis.datas,
     ohmo_analysis.binaries,
     ohmo_analysis.datas,
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="HanHarness",
+    name="HanPlanet-CLI",
 )

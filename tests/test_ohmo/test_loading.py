@@ -148,11 +148,11 @@ def test_run_ohmo_backend_passes_private_skill_and_plugin_roots(tmp_path, monkey
 
 def test_build_ohmo_backend_command_uses_self_executable_when_frozen(monkeypatch):
     monkeypatch.setattr("ohmo.runtime.sys.frozen", True, raising=False)
-    monkeypatch.setattr("ohmo.runtime.sys.executable", "/opt/HanHarness/ohmo")
+    monkeypatch.setattr("ohmo.runtime.sys.executable", "/opt/HanPlanet-CLI/ohmo")
 
     command = build_ohmo_backend_command(cwd="/tmp/demo")
 
-    assert command[:2] == ["/opt/HanHarness/ohmo", "--backend-only"]
+    assert command[:2] == ["/opt/HanPlanet-CLI/ohmo", "--backend-only"]
     assert "-m" not in command
     assert "ohmo" not in command[1:]
 

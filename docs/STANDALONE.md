@@ -1,15 +1,15 @@
 # Standalone Builds
 
-HanHarness can be packaged for users who do not have Python, pip, or pipx installed.
+HanPlanet CLI can be packaged for users who do not have Python, pip, or pipx installed.
 The supported approach is a PyInstaller `onedir` build.
 
 ## Why `onedir`
 
-HanHarness is a Python CLI, but the default terminal UI is a React/Ink frontend
+HanPlanet CLI is a Python CLI, but the default terminal UI is a React/Ink frontend
 under `frontend/terminal`. A practical desktop distribution therefore needs:
 
 - the Python runtime and Python dependencies;
-- HanHarness and ohmo entry points;
+- HanPlanet CLI and ohmo entry points;
 - `frontend/terminal` assets and `node_modules`;
 - a bundled Node.js runtime for the React TUI.
 
@@ -25,7 +25,7 @@ uv run python scripts/build_standalone.py --clean
 The output is:
 
 ```text
-dist/HanHarness/
+dist/HanPlanet-CLI/
   HanPlanet-CLI
   ohmo
   _internal/
@@ -34,9 +34,9 @@ dist/HanHarness/
 Run it:
 
 ```bash
-./dist/HanHarness/HanPlanet-CLI --version
-./dist/HanHarness/HanPlanet-CLI -p "hello"
-./dist/HanHarness/HanPlanet-CLI
+./dist/HanPlanet-CLI/HanPlanet-CLI --version
+./dist/HanPlanet-CLI/HanPlanet-CLI -p "hello"
+./dist/HanPlanet-CLI/HanPlanet-CLI
 ```
 
 ## Build On Windows
@@ -46,7 +46,7 @@ Run this on Windows, not macOS. PyInstaller builds are platform-specific.
 ```powershell
 uv sync --extra dev --extra standalone
 uv run python scripts/build_standalone.py --clean
-.\dist\HanHarness\HanPlanet-CLI.exe --version
+.\dist\HanPlanet CLI\HanPlanet-CLI.exe --version
 ```
 
 ## Bundling Node.js
@@ -68,7 +68,7 @@ work without Node:
 
 ```bash
 uv run python scripts/build_standalone.py --clean --no-bundle-node
-./dist/HanHarness/HanPlanet-CLI -p "hello"
+./dist/HanPlanet-CLI/HanPlanet-CLI -p "hello"
 ```
 
 To use a pre-downloaded Node.js runtime instead of the automatic download, pass

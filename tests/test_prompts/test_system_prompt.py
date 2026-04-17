@@ -59,13 +59,13 @@ def test_build_system_prompt_custom_prompt():
     assert prompt.startswith("You are a helpful bot.")
     assert "Linux 5.15.0" in prompt
     # Base prompt should not appear
-    assert "HanHarness" not in prompt
+    assert "HanPlanet CLI" not in prompt
 
 
 def test_build_system_prompt_default_includes_base():
     env = _make_env()
     prompt = build_system_prompt(env=env)
-    assert "HanHarness" in prompt
+    assert "HanPlanet CLI" in prompt
 
 
 def test_build_system_prompt_allows_standard_developer_commands():

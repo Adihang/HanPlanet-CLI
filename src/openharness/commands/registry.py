@@ -510,10 +510,10 @@ def create_default_command_registry(
     async def _version_handler(_: str, context: CommandContext) -> CommandResult:
         del context
         try:
-            version = importlib.metadata.version("HanHarness")
+            version = importlib.metadata.version("HanPlanet-CLI")
         except importlib.metadata.PackageNotFoundError:
             version = "0.1.6"
-        return CommandResult(message=f"HanHarness {version}")
+        return CommandResult(message=f"HanPlanet CLI {version}")
 
     async def _context_handler(_: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1940,7 +1940,7 @@ def create_default_command_registry(
     async def _upgrade_handler(_: str, context: CommandContext) -> CommandResult:
         del context
         try:
-            version = importlib.metadata.version("HanHarness")
+            version = importlib.metadata.version("HanPlanet-CLI")
         except importlib.metadata.PackageNotFoundError:
             version = "0.1.6"
         return CommandResult(
@@ -1954,8 +1954,8 @@ def create_default_command_registry(
         )
 
     async def _update_handler(args: str, context: CommandContext) -> CommandResult:
-        """Update HanHarness to the latest version via git pull.
-        (git pull로 최신 소스를 받아 HanHarness를 업데이트한다.)
+        """Update HanPlanet CLI to the latest version via git pull.
+        (git pull로 최신 소스를 받아 HanPlanet CLI를 업데이트한다.)
         """
         import sys
         from pathlib import Path
@@ -2014,7 +2014,7 @@ def create_default_command_registry(
             install_command = f"{sys.executable} -m pip install -e {repo_root}"
             if "WinError 32" in output or "oh.exe" in output.lower():
                 return (
-                    "❌ 재설치 실패: 현재 실행 중인 HanHarness가 pipx 실행 파일을 잠그고 있습니다.\n"
+                    "❌ 재설치 실패: 현재 실행 중인 HanPlanet CLI가 pipx 실행 파일을 잠그고 있습니다.\n"
                     "Windows에서는 실행 중인 CLI가 자기 자신의 `oh.exe`를 덮어쓸 수 없습니다.\n\n"
                     "이 창을 `ctrl+c`로 완전히 종료한 뒤, 새 CMD/PowerShell에서 아래 명령을 실행하세요:\n"
                     f"  cd /d {repo_root}\n"
@@ -2465,7 +2465,7 @@ def create_default_command_registry(
     registry.register(SlashCommand("help", "Show available commands", _help_handler))
     registry.register(SlashCommand("exit", "Exit OpenHarness", _exit_handler))
     registry.register(SlashCommand("clear", "Clear conversation history", _clear_handler))
-    registry.register(SlashCommand("version", "Show the installed HanHarness version", _version_handler))
+    registry.register(SlashCommand("version", "Show the installed HanPlanet CLI version", _version_handler))
     registry.register(SlashCommand("status", "Show session status", _status_handler))
     registry.register(SlashCommand("context", "Show the active runtime system prompt", _context_handler))
     registry.register(SlashCommand("summary", "Summarize conversation history", _summary_handler))
@@ -2535,7 +2535,7 @@ def create_default_command_registry(
     registry.register(SlashCommand("rate-limit-options", "Show ways to reduce provider rate pressure", _rate_limit_options_handler))
     registry.register(SlashCommand("release-notes", "Show recent OpenHarness release notes", _release_notes_handler))
     registry.register(SlashCommand("upgrade", "Show upgrade instructions", _upgrade_handler))
-    registry.register(SlashCommand("update", "Pull latest changes from git and update HanHarness", _update_handler))
+    registry.register(SlashCommand("update", "Pull latest changes from git and update HanPlanet CLI", _update_handler))
     registry.register(SlashCommand("agents", "List or inspect agent and teammate tasks", _agents_handler))
     registry.register(SlashCommand("subagents", "Show subagent usage and inspect worker tasks", _agents_handler))
     registry.register(SlashCommand("tasks", "Manage background tasks", _tasks_handler))

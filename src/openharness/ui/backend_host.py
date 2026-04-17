@@ -1808,7 +1808,7 @@ class ReactBackendHost:
             f"{HANPLANET_BASE}/login/handrive?"
             + urlencode({
                 "state":       state,
-                "client_name": "HanHarness",
+                "client_name": "HanPlanet-CLI",
             })
         )
         poll_url = (

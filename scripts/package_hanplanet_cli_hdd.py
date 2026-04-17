@@ -1,4 +1,4 @@
-"""Build HanHarness standalone package and copy it to the Hanplanet HDD."""
+"""Build HanPlanet CLI standalone package and copy it to the Hanplanet HDD."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT = Path("/Volumes/HANPLANET_HDD/Hanplanet/hanharness")
-BUILD_OUTPUT = ROOT / "dist" / "HanHarness"
+DEFAULT_OUTPUT = Path("/Volumes/HANPLANET_HDD/Hanplanet/HanPlanet-CLI")
+BUILD_OUTPUT = ROOT / "dist" / "HanPlanet-CLI"
 
 
 def _run(command: list[str]) -> None:
@@ -21,7 +21,7 @@ def _run(command: list[str]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Build a standalone HanHarness package into the Hanplanet HDD path."
+        description="Build a standalone HanPlanet CLI package into the Hanplanet HDD path."
     )
     parser.add_argument(
         "--output",
@@ -48,7 +48,7 @@ def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(output, ignore_errors=True)
     shutil.copytree(BUILD_OUTPUT, output)
-    print(f"\nPackaged HanHarness written to: {output}")
+    print(f"\nPackaged HanPlanet CLI written to: {output}")
     return 0
 
 

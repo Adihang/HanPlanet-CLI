@@ -36,11 +36,11 @@ def test_build_backend_command_includes_flags():
 
 def test_build_backend_command_uses_self_executable_when_frozen(monkeypatch):
     monkeypatch.setattr("openharness.ui.react_launcher.sys.frozen", True, raising=False)
-    monkeypatch.setattr("openharness.ui.react_launcher.sys.executable", "/opt/HanHarness/hanharness")
+    monkeypatch.setattr("openharness.ui.react_launcher.sys.executable", "/opt/HanPlanet-CLI/hanplanet-cli")
 
     command = build_backend_command(cwd="/tmp/demo")
 
-    assert command[:2] == ["/opt/HanHarness/hanharness", "--backend-only"]
+    assert command[:2] == ["/opt/HanPlanet-CLI/hanplanet-cli", "--backend-only"]
     assert "-m" not in command
     assert "openharness" not in command
 

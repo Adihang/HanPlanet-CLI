@@ -29,7 +29,7 @@ def _env() -> dict[str, str]:
 
 
 def test_welcome_banner() -> tuple[bool, str]:
-    """Test that the React TUI shows the HanHarness welcome banner on startup."""
+    """Test that the React TUI shows the HanPlanet CLI welcome banner on startup."""
     try:
         import pexpect
     except ImportError:

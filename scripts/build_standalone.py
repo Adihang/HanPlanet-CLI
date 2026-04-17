@@ -1,7 +1,7 @@
-"""Build HanHarness standalone binaries with PyInstaller.
+"""Build HanPlanet CLI standalone binaries with PyInstaller.
 
 This script intentionally produces a directory build instead of a single-file
-binary. HanHarness ships a React/Ink terminal frontend, so the runtime needs
+binary. HanPlanet CLI ships a React/Ink terminal frontend, so the runtime needs
 frontend assets and optionally a bundled Node.js runtime next to the executable.
 """
 
@@ -71,7 +71,7 @@ def _download_node(version: str) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build standalone HanHarness executables.")
+    parser = argparse.ArgumentParser(description="Build standalone HanPlanet CLI executables.")
     parser.add_argument(
         "--skip-frontend-install",
         action="store_true",
@@ -91,27 +91,27 @@ def main() -> int:
     )
     parser.add_argument(
         "--node-version",
-        default=os.environ.get("HANHARNESS_NODE_VERSION", DEFAULT_NODE_VERSION),
+        default=os.environ.get("HANPLANET_CLI_NODE_VERSION", DEFAULT_NODE_VERSION),
         help=f"Node.js version to download when bundling automatically. Default: {DEFAULT_NODE_VERSION}.",
     )
-    parser.add_argument("--clean", action="store_true", help="Remove build/ and dist/HanHarness before building.")
+    parser.add_argument("--clean", action="store_true", help="Remove build/ and dist/HanPlanet-CLI before building.")
     args = parser.parse_args()
 
     if args.clean:
         shutil.rmtree(ROOT / "build", ignore_errors=True)
-        shutil.rmtree(ROOT / "dist" / "HanHarness", ignore_errors=True)
+        shutil.rmtree(ROOT / "dist" / "HanPlanet-CLI", ignore_errors=True)
 
     if not args.skip_frontend_install:
         _run(["npm", "ci", "--no-audit", "--no-fund"], cwd=FRONTEND)
 
     env = os.environ.copy()
     if args.node_dir:
-        env["HANHARNESS_BUNDLED_NODE_DIR"] = str(Path(args.node_dir).expanduser().resolve())
+        env["HANPLANET_CLI_BUNDLED_NODE_DIR"] = str(Path(args.node_dir).expanduser().resolve())
     elif not args.no_bundle_node:
-        env["HANHARNESS_BUNDLED_NODE_DIR"] = str(_download_node(args.node_version))
+        env["HANPLANET_CLI_BUNDLED_NODE_DIR"] = str(_download_node(args.node_version))
 
     _run([sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", str(SPEC)], env=env)
-    print(f"\nStandalone build written to: {ROOT / 'dist' / 'HanHarness'}")
+    print(f"\nStandalone build written to: {ROOT / 'dist' / 'HanPlanet-CLI'}")
     return 0
 
 

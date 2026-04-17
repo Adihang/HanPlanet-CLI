@@ -10,7 +10,7 @@ from openharness.ui.runtime import build_runtime
 
 @pytest.mark.asyncio
 async def test_build_runtime_uses_dummy_client_when_auth_resolution_fails(monkeypatch):
-    """HanHarness should start with a dummy client so the provider picker can recover auth."""
+    """HanPlanet CLI should start with a dummy client so the provider picker can recover auth."""
 
     def fake_resolve_auth(self):
         raise ValueError("No credentials found")
