@@ -77,3 +77,21 @@ jobs:
             HanPlanet-CLI-macos-arm64/HanPlanet-CLI-macos-arm64.zip
             HanPlanet-CLI-windows-x64/HanPlanet-CLI-windows-x64.zip
           generate_release_notes: true
+
+  deploy:
+    name: Deploy to HDD
+    needs: build
+    runs-on: self-hosted
+
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: HanPlanet-CLI-macos-arm64
+          path: /Volumes/HANPLANET_HDD/Hanplanet/HanPlanet-CLI
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: HanPlanet-CLI-windows-x64
+          path: /Volumes/HANPLANET_HDD/Hanplanet/HanPlanet-CLI
