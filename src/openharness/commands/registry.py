@@ -271,143 +271,153 @@ def _generate_claude_md(cwd: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _list_dir_names(path: Path) -> list[str]:
+_IGNORE_DIRS = frozenset(
+    {
+        ".git", ".svn", ".hg",
+        "__pycache__", ".mypy_cache", ".ruff_cache", ".pytest_cache",
+        "node_modules", ".next", ".nuxt", "dist", "build", ".dist",
+        ".venv", "venv", ".env", ".tox", ".nox",
+        ".idea", ".vscode",
+    }
+)
+
+_IGNORE_SUFFIXES = frozenset(
+    {".pyc", ".pyo", ".pyd", ".so", ".dylib", ".dll", ".exe",
+     ".zip", ".tar", ".gz", ".whl", ".egg", ".lock"}
+)
+
+# Files whose full content (up to max_chars) is worth reading for context
+_KNOWN_CONFIG_NAMES = frozenset(
+    {
+        "pyproject.toml", "setup.py", "setup.cfg",
+        "package.json", "Cargo.toml", "go.mod", "build.gradle",
+        "Makefile", "CMakeLists.txt", "Dockerfile", "docker-compose.yml",
+        "docker-compose.yaml", ".env.example", "CLAUDE.md",
+        "requirements.txt", "requirements-dev.txt",
+    }
+)
+
+# Entry-point filenames — read the first one found inside each package dir
+_ENTRY_CANDIDATES = ("main.py", "app.py", "cli.py", "server.py", "index.py", "__init__.py",
+                      "index.ts", "index.js", "main.ts", "main.js", "app.ts", "app.js")
+
+
+def _iter_top_entries(root: Path) -> list[Path]:
     try:
-        return sorted(p.name for p in path.iterdir() if not p.name.startswith("."))
+        return sorted(root.iterdir(), key=lambda p: (p.is_dir(), p.name.lower()))
     except OSError:
         return []
 
 
+def _is_text_file(path: Path) -> bool:
+    return path.suffix not in _IGNORE_SUFFIXES and not path.name.startswith(".")
+
+
 def _build_claude_md_scan_summary(cwd: Path) -> str:
+    import json as _json
+
     parts: list[str] = []
-    readme = cwd / "README.md"
-    pyproject = cwd / "pyproject.toml"
-    package_json = cwd / "package.json"
 
-    # README excerpt (first 2000 chars)
-    if readme.exists():
-        excerpt = _read_text_excerpt(readme, max_chars=2000)
-        if excerpt:
-            parts.append(f"README excerpt:\n{excerpt}")
+    # ── 1. README (highest priority, read first) ──────────────────────────
+    for readme_name in ("README.md", "README.rst", "README.txt", "README"):
+        readme = cwd / readme_name
+        if readme.exists():
+            excerpt = _read_text_excerpt(readme, max_chars=2500)
+            if excerpt:
+                parts.append(f"{readme_name}:\n{excerpt}")
+            break
 
-    # pyproject.toml full project metadata + tool config
-    if pyproject.exists():
-        pyproject_data = _load_pyproject(pyproject)
-        project_data = pyproject_data.get("project")
-        if isinstance(project_data, dict):
-            name = project_data.get("name")
-            if isinstance(name, str) and name.strip():
-                parts.append(f"Project name: {name.strip()}")
-            version = project_data.get("version")
-            if isinstance(version, str):
-                parts.append(f"Version: {version}")
-            requires_python = project_data.get("requires-python")
-            if isinstance(requires_python, str):
-                parts.append(f"Requires Python: {requires_python}")
-            dependencies = project_data.get("dependencies")
-            if isinstance(dependencies, list) and dependencies:
-                preview = ", ".join(str(item) for item in dependencies)
-                parts.append(f"Dependencies: {preview}")
-            optional_deps = project_data.get("optional-dependencies")
-            if isinstance(optional_deps, dict):
-                for group, deps in optional_deps.items():
-                    if isinstance(deps, list):
-                        parts.append(f"Optional [{group}]: {', '.join(str(d) for d in deps)}")
-            scripts = project_data.get("scripts")
-            if isinstance(scripts, dict) and scripts:
-                script_lines = ", ".join(f"{k}={v}" for k, v in scripts.items())
-                parts.append(f"CLI scripts: {script_lines}")
+    # ── 2. Top-level file listing (dirs and notable files) ────────────────
+    top_dirs: list[str] = []
+    top_files: list[str] = []
+    for entry in _iter_top_entries(cwd):
+        if entry.name.startswith(".") and entry.name not in {".github", ".cursor"}:
+            continue
+        if entry.is_dir() and entry.name not in _IGNORE_DIRS:
+            top_dirs.append(entry.name)
+        elif entry.is_file() and _is_text_file(entry):
+            top_files.append(entry.name)
 
-    # package.json scripts
-    if package_json.exists():
-        try:
-            import json as _json
-            pkg = _json.loads(package_json.read_text(encoding="utf-8"))
-            pkg_scripts = pkg.get("scripts", {})
-            if pkg_scripts:
-                s = ", ".join(f"{k}: {v}" for k, v in list(pkg_scripts.items())[:10])
-                parts.append(f"npm scripts: {s}")
-        except Exception:
-            pass
-
-    # Top-level directory listing
-    top_dirs = [p.name for p in sorted(cwd.iterdir()) if p.is_dir() and not p.name.startswith(".")]
     if top_dirs:
         parts.append(f"Top-level directories: {', '.join(top_dirs)}")
+    if top_files:
+        parts.append(f"Top-level files: {', '.join(top_files)}")
 
-    # Source package structure
-    src_dir = cwd / "src"
-    if src_dir.is_dir():
-        for pkg_dir in sorted(src_dir.iterdir()):
-            if pkg_dir.is_dir() and not pkg_dir.name.startswith("."):
-                submodules = _list_dir_names(pkg_dir)
-                parts.append(f"src/{pkg_dir.name}/ modules: {', '.join(submodules)}")
-                # Read __init__.py or main entry file for public API hints
-                for candidate in ("__init__.py", "main.py", "app.py", "cli.py"):
-                    entry = pkg_dir / candidate
-                    if entry.exists():
-                        excerpt = _read_text_excerpt(entry, max_chars=1500)
-                        if excerpt:
-                            parts.append(f"src/{pkg_dir.name}/{candidate} excerpt:\n{excerpt}")
-                        break
-
-    # ohmo package (top-level sibling package)
-    ohmo_dir = cwd / "ohmo"
-    if ohmo_dir.is_dir():
-        ohmo_modules = _list_dir_names(ohmo_dir)
-        parts.append(f"ohmo/ modules: {', '.join(ohmo_modules)}")
-        ohmo_cli = ohmo_dir / "cli.py"
-        if ohmo_cli.exists():
-            parts.append(f"ohmo/cli.py excerpt:\n{_read_text_excerpt(ohmo_cli, max_chars=800)}")
-
-    # Test directory layout
-    tests_dir = cwd / "tests"
-    if tests_dir.is_dir():
-        test_groups = _list_dir_names(tests_dir)
-        parts.append(f"Test groups: {', '.join(test_groups)}")
-
-    # Frontend structure
-    frontend_dir = cwd / "frontend"
-    if frontend_dir.is_dir():
-        for subdir in sorted(frontend_dir.iterdir()):
-            if subdir.is_dir():
-                src = subdir / "src"
-                if src.is_dir():
-                    components = _list_dir_names(src)
-                    parts.append(f"frontend/{subdir.name}/src/: {', '.join(components)}")
-                pkg = subdir / "package.json"
-                if pkg.exists():
-                    try:
-                        import json as _json2
-                        p = _json2.loads(pkg.read_text(encoding="utf-8"))
-                        s = p.get("scripts", {})
-                        if s:
-                            parts.append(
-                                f"frontend/{subdir.name} npm scripts: "
-                                + ", ".join(f"{k}: {v}" for k, v in list(s.items())[:6])
-                            )
-                    except Exception:
-                        pass
-
-    # Key config files
-    for cfg in ("CLAUDE.md", ".env.example", "Makefile", "docker-compose.yml", "Dockerfile"):
-        cfg_path = cwd / cfg
-        if cfg_path.exists():
-            excerpt = _read_text_excerpt(cfg_path, max_chars=1000)
+    # ── 3. Known config files — read content ──────────────────────────────
+    for name in sorted(_KNOWN_CONFIG_NAMES):
+        cfg = cwd / name
+        if cfg.exists() and cfg.name != "CLAUDE.md":
+            excerpt = _read_text_excerpt(cfg, max_chars=1500)
             if excerpt:
-                parts.append(f"{cfg} excerpt:\n{excerpt}")
+                parts.append(f"{name}:\n{excerpt}")
 
-    # scripts/ directory listing
-    scripts_dir = cwd / "scripts"
-    if scripts_dir.is_dir():
-        script_files = _list_dir_names(scripts_dir)
-        parts.append(f"scripts/: {', '.join(script_files)}")
+    # ── 4. Existing CLAUDE.md (for --force regeneration context) ──────────
+    existing_claude = cwd / "CLAUDE.md"
+    if existing_claude.exists():
+        excerpt = _read_text_excerpt(existing_claude, max_chars=1000)
+        if excerpt:
+            parts.append(f"Existing CLAUDE.md:\n{excerpt}")
 
-    # CI/CD workflows
+    # ── 5. Recursive directory exploration (depth ≤ 2) ────────────────────
+    def _explore_dir(dirpath: Path, rel: str, depth: int) -> None:
+        if depth > 2:
+            return
+        try:
+            children = sorted(dirpath.iterdir(), key=lambda p: (p.is_dir(), p.name.lower()))
+        except OSError:
+            return
+
+        child_dirs: list[str] = []
+        child_files: list[str] = []
+        for child in children:
+            if child.name.startswith(".") or child.name in _IGNORE_DIRS:
+                continue
+            if child.is_dir():
+                child_dirs.append(child.name)
+            elif child.is_file() and _is_text_file(child):
+                child_files.append(child.name)
+
+        if child_dirs or child_files:
+            listing = []
+            if child_dirs:
+                listing.append(f"dirs: {', '.join(child_dirs)}")
+            if child_files:
+                listing.append(f"files: {', '.join(child_files)}")
+            parts.append(f"{rel}/  [{'; '.join(listing)}]")
+
+        # Read entry-point file for each sub-package
+        for candidate in _ENTRY_CANDIDATES:
+            entry = dirpath / candidate
+            if entry.exists():
+                excerpt = _read_text_excerpt(entry, max_chars=1200)
+                if excerpt:
+                    parts.append(f"{rel}/{candidate}:\n{excerpt}")
+                break
+
+        # Read package.json scripts for any sub-directory that has one
+        pkg_json = dirpath / "package.json"
+        if pkg_json.exists() and pkg_json != cwd / "package.json":
+            try:
+                pkg = _json.loads(pkg_json.read_text(encoding="utf-8"))
+                scripts = pkg.get("scripts", {})
+                if scripts:
+                    s = ", ".join(f"{k}: {v}" for k, v in list(scripts.items())[:8])
+                    parts.append(f"{rel}/package.json scripts: {s}")
+            except Exception:
+                pass
+
+        for child_name in child_dirs:
+            _explore_dir(dirpath / child_name, f"{rel}/{child_name}", depth + 1)
+
+    for d in top_dirs:
+        _explore_dir(cwd / d, d, 1)
+
+    # ── 6. CI/CD ──────────────────────────────────────────────────────────
     workflows_dir = cwd / ".github" / "workflows"
     if workflows_dir.is_dir():
-        workflows = _list_dir_names(workflows_dir)
-        parts.append(f".github/workflows/: {', '.join(workflows)}")
+        wf_names = sorted(p.name for p in workflows_dir.iterdir() if p.is_file())
+        if wf_names:
+            parts.append(f".github/workflows/: {', '.join(wf_names)}")
 
     if not parts:
         return "No notable project files were found."
