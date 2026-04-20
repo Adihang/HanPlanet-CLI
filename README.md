@@ -655,9 +655,9 @@ git tag v*.*.* && git push origin v*.*.*
 수동 트리거는 GitHub CLI로도 실행할 수 있다.
 
 ```bash
-gh workflow run "Build Standalone" --repo Adihang/HanHarness --ref main
-gh run list --repo Adihang/HanHarness --workflow "Build Standalone" --limit 5
-gh run watch --repo Adihang/HanHarness
+gh workflow run "Build Standalone" --repo Adihang/HanPlanet-CLI --ref main
+gh run list --repo Adihang/HanPlanet-CLI --workflow "Build Standalone" --limit 5
+gh run watch --repo Adihang/HanPlanet-CLI
 ```
 
 워크플로우 내부 빌드 명령:
