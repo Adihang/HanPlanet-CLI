@@ -637,11 +637,7 @@ def create_default_command_registry(
 
     async def _version_handler(_: str, context: CommandContext) -> CommandResult:
         del context
-        try:
-            version = importlib.metadata.version("HanPlanet-CLI")
-        except importlib.metadata.PackageNotFoundError:
-            version = "0.1.7"
-        return CommandResult(message=f"HanPlanet CLI {version}")
+        return CommandResult(message=f"HanPlanet CLI {_get_current_version()}")
 
     async def _context_handler(_: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -2081,12 +2077,179 @@ def create_default_command_registry(
             )
         )
 
+    def _get_current_version() -> str:
+        import sys
+
+        if getattr(sys, "frozen", False):
+            from pathlib import Path
+
+            vf = Path(sys._MEIPASS) / "VERSION"  # type: ignore[attr-defined]
+            if vf.exists():
+                return vf.read_text(encoding="utf-8").strip()
+            return "0.0.0"
+        try:
+            return importlib.metadata.version("HanPlanet-CLI")
+        except importlib.metadata.PackageNotFoundError:
+            return "0.1.7"
+
+    async def _frozen_update_handler(args: str, context: CommandContext) -> CommandResult:
+        """Standalone bundle self-update via GitHub Releases."""
+        import platform
+        import shutil
+        import sys
+        import zipfile
+        from pathlib import Path
+
+        import httpx
+
+        del args, context
+
+        current = _get_current_version()
+
+        # ── 1. Query latest GitHub release ───────────────────────────────
+        api_url = "https://api.github.com/repos/Adihang/HanPlanet-CLI/releases/latest"
+        try:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+                resp = await client.get(
+                    api_url,
+                    headers={
+                        "Accept": "application/vnd.github+json",
+                        "User-Agent": "HanPlanet-CLI",
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPError as exc:
+            return CommandResult(message=f"❌ GitHub API 요청 실패:\n{exc}")
+
+        latest_tag: str = data.get("tag_name", "")
+        latest = latest_tag.lstrip("v")
+        assets: list[dict[str, object]] = data.get("assets", [])
+
+        def _ver_tuple(v: str) -> tuple[int, ...]:
+            try:
+                return tuple(int(x) for x in v.split(".") if x.isdigit())
+            except Exception:
+                return (0,)
+
+        if _ver_tuple(latest) <= _ver_tuple(current):
+            return CommandResult(
+                message=f"✅ 이미 최신 버전입니다 (v{current})"
+            )
+
+        # ── 2. Select platform asset ──────────────────────────────────────
+        if sys.platform == "darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+            asset_name = "HanPlanet-CLI-macos-arm64.zip"
+        elif sys.platform == "win32":
+            asset_name = "HanPlanet-CLI-windows-x64.zip"
+        else:
+            return CommandResult(
+                message="⚠️ 이 플랫폼용 바이너리 릴리스가 제공되지 않습니다."
+            )
+
+        download_url = next(
+            (str(a["browser_download_url"]) for a in assets if a.get("name") == asset_name),
+            None,
+        )
+        if download_url is None:
+            return CommandResult(
+                message=f"❌ 릴리스 '{latest_tag}'에서 '{asset_name}' 파일을 찾을 수 없습니다."
+            )
+
+        # ── 3. Locate bundle directory ────────────────────────────────────
+        bundle_dir = Path(sys.executable).resolve().parent
+        if not (bundle_dir / "_internal").is_dir():
+            return CommandResult(
+                message="❌ 번들 디렉토리 구조를 인식할 수 없습니다.\n"
+                f"  감지된 경로: {bundle_dir}"
+            )
+        parent_dir = bundle_dir.parent
+        zip_path = parent_dir / asset_name
+        extract_tmp = parent_dir / "HanPlanet-CLI.new_extracted"
+        new_dir = parent_dir / "HanPlanet-CLI.new"
+        old_dir = parent_dir / "HanPlanet-CLI.old"
+
+        # ── 4. Download ───────────────────────────────────────────────────
+        try:
+            async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
+                async with client.stream("GET", download_url) as stream:
+                    stream.raise_for_status()
+                    with open(zip_path, "wb") as f:
+                        async for chunk in stream.aiter_bytes(65536):
+                            f.write(chunk)
+        except Exception as exc:
+            zip_path.unlink(missing_ok=True)
+            return CommandResult(message=f"❌ 다운로드 실패:\n{exc}")
+
+        # ── 5. Extract ────────────────────────────────────────────────────
+        try:
+            await asyncio.to_thread(shutil.rmtree, extract_tmp, True)
+            await asyncio.to_thread(shutil.rmtree, new_dir, True)
+
+            def _extract() -> None:
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    zf.extractall(extract_tmp)
+
+            await asyncio.to_thread(_extract)
+            zip_path.unlink(missing_ok=True)
+
+            # zip contains a top-level HanPlanet-CLI/ directory
+            inner = extract_tmp / "HanPlanet-CLI"
+            if not inner.is_dir():
+                inner = extract_tmp  # fallback: zip root IS the bundle
+            await asyncio.to_thread(inner.rename, new_dir)
+            await asyncio.to_thread(shutil.rmtree, extract_tmp, True)
+        except Exception as exc:
+            for p in (zip_path, extract_tmp, new_dir):
+                await asyncio.to_thread(shutil.rmtree, p, True)
+            return CommandResult(message=f"❌ 압축 해제 실패:\n{exc}")
+
+        # ── 6. Swap ───────────────────────────────────────────────────────
+        if sys.platform == "win32":
+            return CommandResult(
+                message=(
+                    f"✅ v{latest} 다운로드 완료!\n\n"
+                    "Windows에서는 실행 중인 파일을 자동으로 교체할 수 없습니다.\n"
+                    "이 창을 닫은 후 아래 순서로 수동 교체하세요:\n\n"
+                    f"  1. 이 프로그램을 완전히 종료\n"
+                    f"  2. '{bundle_dir}' 폴더 삭제\n"
+                    f"  3. '{new_dir}' 폴더 이름을 'HanPlanet-CLI'로 변경\n\n"
+                    "관리자 PowerShell에서 한 번에:\n"
+                    f"  Remove-Item -Recurse -Force '{bundle_dir}'\n"
+                    f"  Rename-Item '{new_dir}' 'HanPlanet-CLI'"
+                )
+            )
+
+        # macOS / Linux: atomic rename
+        await asyncio.to_thread(shutil.rmtree, old_dir, True)
+        try:
+            await asyncio.to_thread(bundle_dir.rename, old_dir)
+            try:
+                await asyncio.to_thread(new_dir.rename, bundle_dir)
+            except Exception as exc:
+                await asyncio.to_thread(old_dir.rename, bundle_dir)  # rollback
+                return CommandResult(message=f"❌ 디렉토리 교체 실패 (롤백 완료):\n{exc}")
+        except Exception as exc:
+            return CommandResult(message=f"❌ 기존 번들 이동 실패:\n{exc}")
+
+        await asyncio.to_thread(shutil.rmtree, old_dir, True)
+        return CommandResult(
+            message=(
+                f"✅ v{latest}으로 업데이트 완료!\n"
+                "프로그램을 재시작하면 새 버전이 적용됩니다.\n"
+                "  (Ctrl+C 후 다시 실행)"
+            )
+        )
+
     async def _update_handler(args: str, context: CommandContext) -> CommandResult:
         """Update HanPlanet CLI to the latest version via git pull.
         (git pull로 최신 소스를 받아 HanPlanet CLI를 업데이트한다.)
         """
         import sys
         from pathlib import Path
+
+        if getattr(sys, "frozen", False):
+            return await _frozen_update_handler(args, context)
 
         force = args.strip().lower() == "force"
         settings = load_settings()

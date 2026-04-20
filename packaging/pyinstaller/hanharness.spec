@@ -37,6 +37,10 @@ def _datas() -> list[tuple[str, str]]:
         if path.exists():
             datas.append((str(path), "openharness/_node"))
 
+    version_file = ROOT / "VERSION"
+    if version_file.exists():
+        datas.append((str(version_file), "."))
+
     datas.extend(collect_data_files("openharness", include_py_files=False))
     datas.extend(collect_data_files("ohmo", include_py_files=False))
     return datas

@@ -110,6 +110,13 @@ def main() -> int:
     elif not args.no_bundle_node:
         env["HANPLANET_CLI_BUNDLED_NODE_DIR"] = str(_download_node(args.node_version))
 
+    import tomllib
+
+    with open(ROOT / "pyproject.toml", "rb") as _f:
+        _version = tomllib.load(_f)["project"]["version"]
+    (ROOT / "VERSION").write_text(_version, encoding="utf-8")
+    print(f"VERSION file written: {_version}")
+
     _run([sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", str(SPEC)], env=env)
     print(f"\nStandalone build written to: {ROOT / 'dist' / 'HanPlanet-CLI'}")
     return 0
