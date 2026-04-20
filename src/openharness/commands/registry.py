@@ -986,7 +986,7 @@ def create_default_command_registry(
         for relative, content in (
             (
                 project_dir / "README.md",
-                "# Project OpenHarness Config\n\nThis directory stores project-specific OpenHarness state.\n",
+                "# Project HanPlanet Config\n\nThis directory stores project-specific HanPlanet CLI state.\n",
             ),
             (
                 project_dir / "memory" / "MEMORY.md",
@@ -1007,7 +1007,7 @@ def create_default_command_registry(
                 created.append(str(relative.relative_to(Path(context.cwd))))
 
         if not created:
-            return CommandResult(message="Project already initialized for OpenHarness.")
+            return CommandResult(message="Project already initialized for HanPlanet CLI.")
         header = "Initialized project files"
         if force and claudemd_existed:
             header = "Regenerated project files"
@@ -2031,7 +2031,7 @@ def create_default_command_registry(
             f"- feedback_log: {get_feedback_log_path()}",
             f"- api_base_url: {settings.base_url or '(default Anthropic-compatible endpoint)'}",
             "- network: enabled only for provider and explicit web/MCP calls",
-            "- storage: local files under ~/.openharness and project .openharness",
+            "- storage: local files under ~/.openharness and project .hanplanet",
         ]
         return CommandResult(message="\n".join(lines))
 

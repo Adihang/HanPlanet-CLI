@@ -74,7 +74,7 @@ def _write_plugin(root: Path) -> None:
 def test_load_plugins_from_project_dir(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     project = tmp_path / "repo"
-    plugins_root = project / ".openharness" / "plugins"
+    plugins_root = project / ".hanplanet" / "plugins"
     plugins_root.mkdir(parents=True)
     _write_plugin(plugins_root)
 
@@ -94,7 +94,7 @@ def test_load_plugins_from_project_dir(tmp_path: Path, monkeypatch):
 def test_plugin_skills_and_hooks_are_merged(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     project = tmp_path / "repo"
-    plugins_root = project / ".openharness" / "plugins"
+    plugins_root = project / ".hanplanet" / "plugins"
     plugins_root.mkdir(parents=True)
     _write_plugin(plugins_root)
 
@@ -110,7 +110,7 @@ def test_plugin_skills_and_hooks_are_merged(tmp_path: Path, monkeypatch):
 def test_project_plugins_are_disabled_by_default(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     project = tmp_path / "repo"
-    plugins_root = project / ".openharness" / "plugins"
+    plugins_root = project / ".hanplanet" / "plugins"
     plugins_root.mkdir(parents=True)
     _write_plugin(plugins_root)
 
@@ -122,7 +122,7 @@ def test_project_plugins_are_disabled_by_default(tmp_path: Path, monkeypatch):
 def test_project_plugins_disabled_by_default_warns_operator(tmp_path: Path, monkeypatch, caplog):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     project = tmp_path / "repo"
-    plugins_root = project / ".openharness" / "plugins"
+    plugins_root = project / ".hanplanet" / "plugins"
     plugins_root.mkdir(parents=True)
     _write_plugin(plugins_root)
 
@@ -137,7 +137,7 @@ def test_project_plugins_disabled_by_default_warns_operator(tmp_path: Path, monk
 def test_user_plugins_still_load_when_project_plugins_are_disabled(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     project = tmp_path / "repo"
-    project_plugins_root = project / ".openharness" / "plugins"
+    project_plugins_root = project / ".hanplanet" / "plugins"
     project_plugins_root.mkdir(parents=True)
     _write_plugin(project_plugins_root)
 

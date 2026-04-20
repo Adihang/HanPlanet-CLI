@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 _DEFAULT_BASE_DIR = ".openharness"
+_PROJECT_BASE_DIR = ".hanplanet"
 _CONFIG_FILE_NAME = "settings.json"
 
 
@@ -100,8 +101,8 @@ def get_cron_registry_path() -> Path:
 
 
 def get_project_config_dir(cwd: str | Path) -> Path:
-    """Return the per-project .openharness directory."""
-    project_dir = Path(cwd).resolve() / ".openharness"
+    """Return the per-project HanPlanet directory."""
+    project_dir = Path(cwd).resolve() / _PROJECT_BASE_DIR
     project_dir.mkdir(parents=True, exist_ok=True)
     return project_dir
 

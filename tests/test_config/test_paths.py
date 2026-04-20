@@ -9,6 +9,7 @@ from openharness.config.paths import (
     get_config_file_path,
     get_data_dir,
     get_logs_dir,
+    get_project_config_dir,
 )
 
 
@@ -67,3 +68,9 @@ def test_get_logs_dir_env_override(tmp_path: Path, monkeypatch):
     logs_dir = get_logs_dir()
     assert logs_dir == custom
     assert logs_dir.is_dir()
+
+
+def test_get_project_config_dir_uses_hanplanet(tmp_path: Path):
+    project_dir = get_project_config_dir(tmp_path)
+    assert project_dir == tmp_path / ".hanplanet"
+    assert project_dir.is_dir()

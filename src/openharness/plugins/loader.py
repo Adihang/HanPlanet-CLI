@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 import yaml
 
-from openharness.config.paths import get_config_dir
+from openharness.config.paths import get_config_dir, get_project_config_dir
 from openharness.coordinator.agent_definitions import (
     AGENT_COLORS,
     EFFORT_LEVELS,
@@ -39,7 +39,7 @@ def get_user_plugins_dir() -> Path:
 
 def get_project_plugins_dir(cwd: str | Path) -> Path:
     """Return the project plugin directory."""
-    path = Path(cwd).resolve() / ".openharness" / "plugins"
+    path = get_project_config_dir(cwd) / "plugins"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

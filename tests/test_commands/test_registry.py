@@ -806,7 +806,7 @@ demo = "demo:main"
     claude_md = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert "demo-project" in claude_md
     assert "uv run pytest -q" in claude_md
-    assert (tmp_path / ".openharness" / "memory" / "MEMORY.md").exists()
+    assert (tmp_path / ".hanplanet" / "memory" / "MEMORY.md").exists()
 
     bridge_show_command, bridge_show_args = registry.lookup("/bridge show")
     bridge_show_result = await bridge_show_command.handler(bridge_show_args, context)
