@@ -25,6 +25,8 @@ CACHE = ROOT / ".standalone-cache"
 
 
 def _run(command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None) -> None:
+    if command and command[0] == "npm":
+        command = [shutil.which("npm") or "npm", *command[1:]]
     print("+", " ".join(command), flush=True)
     subprocess.run(command, cwd=cwd, env=env, check=True)
 
