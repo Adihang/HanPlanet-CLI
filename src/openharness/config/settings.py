@@ -477,6 +477,7 @@ class Settings(BaseModel):
     memory: MemorySettings = Field(default_factory=MemorySettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     enabled_plugins: dict[str, bool] = Field(default_factory=dict)
+    allow_project_plugins: bool = False
     mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
     preload_skills: list[str] = Field(
         default_factory=list,

@@ -1,6 +1,5 @@
 import React, {useEffect, useState} from 'react';
 import {Text} from 'ink';
-import InkSpinner from 'ink-spinner';
 
 import {useTheme} from '../theme/ThemeContext.js';
 
@@ -15,29 +14,33 @@ const VERBS = [
 	'Considering',
 ];
 
+const WINDOWS_SAFE_FRAMES = ['-', '\\', '|', '/'];
+
 export function Spinner({label}: {label?: string}): React.JSX.Element {
 	const {theme} = useTheme();
+	const frames = process.platform === 'win32' ? WINDOWS_SAFE_FRAMES : theme.icons.spinner;
+	const [frame, setFrame] = useState(0);
 	const [verbIndex, setVerbIndex] = useState(0);
 
 	useEffect(() => {
-		if (label) return;
+		const timer = setInterval(() => {
+			setFrame((f) => (f + 1) % frames.length);
+		}, 100);
+		return () => clearInterval(timer);
+	}, [frames.length]);
+
+	useEffect(() => {
 		const timer = setInterval(() => {
 			setVerbIndex((v) => (v + 1) % VERBS.length);
 		}, 3000);
 		return () => clearInterval(timer);
-	}, [label]);
+	}, []);
 
 	const verb = label ?? `${VERBS[verbIndex]}...`;
 
-	// Use ink-spinner's 'line' type in ASCII-only (Accent) themes instead of braille dots
-	// (Accent 테마(ASCII 전용)에서는 braille 글자 대신 ink-spinner의 'line' 스피너 사용)
-	const spinnerType = theme.icons.spinner.length <= 4 ? 'line' : 'dots';
-
 	return (
 		<Text>
-			<Text color={theme.colors.primary}>
-				<InkSpinner type={spinnerType} />
-			</Text>
+			<Text color={theme.colors.primary}>{frames[frame]}</Text>
 			<Text dimColor> {verb}</Text>
 		</Text>
 	);

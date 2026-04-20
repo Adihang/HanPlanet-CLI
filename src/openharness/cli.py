@@ -10,7 +10,7 @@ from typing import Optional
 
 import typer
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 
 
 def _safe_short(text: str, *, limit: int = 140) -> str:

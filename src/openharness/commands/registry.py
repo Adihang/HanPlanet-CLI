@@ -512,7 +512,7 @@ def create_default_command_registry(
         try:
             version = importlib.metadata.version("HanPlanet-CLI")
         except importlib.metadata.PackageNotFoundError:
-            version = "0.1.6"
+            version = "0.1.7"
         return CommandResult(message=f"HanPlanet CLI {version}")
 
     async def _context_handler(_: str, context: CommandContext) -> CommandResult:
@@ -1942,7 +1942,7 @@ def create_default_command_registry(
         try:
             version = importlib.metadata.version("HanPlanet-CLI")
         except importlib.metadata.PackageNotFoundError:
-            version = "0.1.6"
+            version = "0.1.7"
         return CommandResult(
             message=(
                 f"Current version: {version}\n"
@@ -2493,8 +2493,24 @@ def create_default_command_registry(
     registry.register(SlashCommand("config", "Show or update configuration", _config_handler))
     registry.register(SlashCommand("language", "Show or set AI response language", _language_handler))
     registry.register(SlashCommand("mcp", "Show MCP status", _mcp_handler))
-    registry.register(SlashCommand("plugin", "Manage plugins", _plugin_handler))
-    registry.register(SlashCommand("reload-plugins", "Reload plugin discovery for this workspace", _reload_plugins_handler))
+    registry.register(
+        SlashCommand(
+            "plugin",
+            "Manage plugins",
+            _plugin_handler,
+            remote_invocable=False,
+            remote_admin_opt_in=True,
+        )
+    )
+    registry.register(
+        SlashCommand(
+            "reload-plugins",
+            "Reload plugin discovery for this workspace",
+            _reload_plugins_handler,
+            remote_invocable=False,
+            remote_admin_opt_in=True,
+        )
+    )
     registry.register(
         SlashCommand(
             "permissions",

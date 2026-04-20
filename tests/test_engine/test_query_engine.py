@@ -783,6 +783,11 @@ async def test_query_engine_tracks_async_agent_activity(tmp_path: Path, monkeypa
     async_state = engine._tool_metadata.get("async_agent_state")
     assert isinstance(async_state, list)
     assert async_state[-1].startswith("Spawned async agent")
+    async_tasks = engine._tool_metadata.get("async_agent_tasks")
+    assert isinstance(async_tasks, list)
+    assert async_tasks[-1]["agent_id"] == "worker@team"
+    assert async_tasks[-1]["task_id"] == "task_123"
+    assert async_tasks[-1]["notification_sent"] is False
 
 
 @pytest.mark.asyncio

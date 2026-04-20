@@ -568,6 +568,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			{session.ready && !session.modal && !selectModal && !multiSelectModal ? (
 				<Box>
 					<Text dimColor>
+						<Text color={theme.colors.primary}>shift+enter</Text> newline{'  '}
 						<Text color={theme.colors.primary}>enter</Text> send{'  '}
 						<Text color={theme.colors.primary}>/</Text> commands{'  '}
 						<Text color={theme.colors.primary}>{'\u2191\u2193'}</Text> history{'  '}

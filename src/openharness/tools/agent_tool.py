@@ -97,5 +97,11 @@ class AgentTool(BaseTool):
             output=(
                 f"Spawned agent {result.agent_id} "
                 f"(task_id={result.task_id}, backend={result.backend_type})"
-            )
+            ),
+            metadata={
+                "agent_id": result.agent_id,
+                "task_id": result.task_id,
+                "backend_type": result.backend_type,
+                "description": arguments.description,
+            },
         )
