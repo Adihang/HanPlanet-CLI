@@ -871,7 +871,7 @@ demo = "demo:main"
     assert "AI draft failed" not in init_result.message
     assert draft_client.last_request is not None
     assert draft_client.last_request.model == "claude-test"
-    assert "Write a concise CLAUDE.md file" in draft_client.last_request.messages[0].text
+    assert "CLAUDE.md" in draft_client.last_request.messages[0].text
     assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "# Demo CLAUDE\n\n- Use the demo command."
 
 

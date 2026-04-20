@@ -271,16 +271,26 @@ def _generate_claude_md(cwd: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _list_dir_names(path: Path) -> list[str]:
+    try:
+        return sorted(p.name for p in path.iterdir() if not p.name.startswith("."))
+    except OSError:
+        return []
+
+
 def _build_claude_md_scan_summary(cwd: Path) -> str:
     parts: list[str] = []
     readme = cwd / "README.md"
     pyproject = cwd / "pyproject.toml"
+    package_json = cwd / "package.json"
 
+    # README excerpt (first 2000 chars)
     if readme.exists():
-        summary = _first_markdown_heading(_read_text_excerpt(readme, max_chars=4000))
-        if summary:
-            parts.append(f"README heading: {summary}")
+        excerpt = _read_text_excerpt(readme, max_chars=2000)
+        if excerpt:
+            parts.append(f"README excerpt:\n{excerpt}")
 
+    # pyproject.toml full project metadata + tool config
     if pyproject.exists():
         pyproject_data = _load_pyproject(pyproject)
         project_data = pyproject_data.get("project")
@@ -288,22 +298,120 @@ def _build_claude_md_scan_summary(cwd: Path) -> str:
             name = project_data.get("name")
             if isinstance(name, str) and name.strip():
                 parts.append(f"Project name: {name.strip()}")
+            version = project_data.get("version")
+            if isinstance(version, str):
+                parts.append(f"Version: {version}")
+            requires_python = project_data.get("requires-python")
+            if isinstance(requires_python, str):
+                parts.append(f"Requires Python: {requires_python}")
             dependencies = project_data.get("dependencies")
             if isinstance(dependencies, list) and dependencies:
-                preview = ", ".join(str(item) for item in dependencies[:8])
+                preview = ", ".join(str(item) for item in dependencies)
                 parts.append(f"Dependencies: {preview}")
+            optional_deps = project_data.get("optional-dependencies")
+            if isinstance(optional_deps, dict):
+                for group, deps in optional_deps.items():
+                    if isinstance(deps, list):
+                        parts.append(f"Optional [{group}]: {', '.join(str(d) for d in deps)}")
             scripts = project_data.get("scripts")
             if isinstance(scripts, dict) and scripts:
-                script_names = ", ".join(str(name) for name in list(scripts)[:8])
-                parts.append(f"Scripts: {script_names}")
+                script_lines = ", ".join(f"{k}={v}" for k, v in scripts.items())
+                parts.append(f"CLI scripts: {script_lines}")
 
-    directories = [name for name in ("src", "tests", "scripts", "frontend", "ohmo") if (cwd / name).is_dir()]
-    if directories:
-        parts.append(f"Detected directories: {', '.join(directories)}")
+    # package.json scripts
+    if package_json.exists():
+        try:
+            import json as _json
+            pkg = _json.loads(package_json.read_text(encoding="utf-8"))
+            pkg_scripts = pkg.get("scripts", {})
+            if pkg_scripts:
+                s = ", ".join(f"{k}: {v}" for k, v in list(pkg_scripts.items())[:10])
+                parts.append(f"npm scripts: {s}")
+        except Exception:
+            pass
+
+    # Top-level directory listing
+    top_dirs = [p.name for p in sorted(cwd.iterdir()) if p.is_dir() and not p.name.startswith(".")]
+    if top_dirs:
+        parts.append(f"Top-level directories: {', '.join(top_dirs)}")
+
+    # Source package structure
+    src_dir = cwd / "src"
+    if src_dir.is_dir():
+        for pkg_dir in sorted(src_dir.iterdir()):
+            if pkg_dir.is_dir() and not pkg_dir.name.startswith("."):
+                submodules = _list_dir_names(pkg_dir)
+                parts.append(f"src/{pkg_dir.name}/ modules: {', '.join(submodules)}")
+                # Read __init__.py or main entry file for public API hints
+                for candidate in ("__init__.py", "main.py", "app.py", "cli.py"):
+                    entry = pkg_dir / candidate
+                    if entry.exists():
+                        excerpt = _read_text_excerpt(entry, max_chars=1500)
+                        if excerpt:
+                            parts.append(f"src/{pkg_dir.name}/{candidate} excerpt:\n{excerpt}")
+                        break
+
+    # ohmo package (top-level sibling package)
+    ohmo_dir = cwd / "ohmo"
+    if ohmo_dir.is_dir():
+        ohmo_modules = _list_dir_names(ohmo_dir)
+        parts.append(f"ohmo/ modules: {', '.join(ohmo_modules)}")
+        ohmo_cli = ohmo_dir / "cli.py"
+        if ohmo_cli.exists():
+            parts.append(f"ohmo/cli.py excerpt:\n{_read_text_excerpt(ohmo_cli, max_chars=800)}")
+
+    # Test directory layout
+    tests_dir = cwd / "tests"
+    if tests_dir.is_dir():
+        test_groups = _list_dir_names(tests_dir)
+        parts.append(f"Test groups: {', '.join(test_groups)}")
+
+    # Frontend structure
+    frontend_dir = cwd / "frontend"
+    if frontend_dir.is_dir():
+        for subdir in sorted(frontend_dir.iterdir()):
+            if subdir.is_dir():
+                src = subdir / "src"
+                if src.is_dir():
+                    components = _list_dir_names(src)
+                    parts.append(f"frontend/{subdir.name}/src/: {', '.join(components)}")
+                pkg = subdir / "package.json"
+                if pkg.exists():
+                    try:
+                        import json as _json2
+                        p = _json2.loads(pkg.read_text(encoding="utf-8"))
+                        s = p.get("scripts", {})
+                        if s:
+                            parts.append(
+                                f"frontend/{subdir.name} npm scripts: "
+                                + ", ".join(f"{k}: {v}" for k, v in list(s.items())[:6])
+                            )
+                    except Exception:
+                        pass
+
+    # Key config files
+    for cfg in ("CLAUDE.md", ".env.example", "Makefile", "docker-compose.yml", "Dockerfile"):
+        cfg_path = cwd / cfg
+        if cfg_path.exists():
+            excerpt = _read_text_excerpt(cfg_path, max_chars=1000)
+            if excerpt:
+                parts.append(f"{cfg} excerpt:\n{excerpt}")
+
+    # scripts/ directory listing
+    scripts_dir = cwd / "scripts"
+    if scripts_dir.is_dir():
+        script_files = _list_dir_names(scripts_dir)
+        parts.append(f"scripts/: {', '.join(script_files)}")
+
+    # CI/CD workflows
+    workflows_dir = cwd / ".github" / "workflows"
+    if workflows_dir.is_dir():
+        workflows = _list_dir_names(workflows_dir)
+        parts.append(f".github/workflows/: {', '.join(workflows)}")
 
     if not parts:
         return "No notable project files were found."
-    return "\n".join(f"- {item}" for item in parts)
+    return "\n\n".join(parts)
 
 
 def _extract_text_from_assistant_message(message: ConversationMessage) -> str:
@@ -312,34 +420,44 @@ def _extract_text_from_assistant_message(message: ConversationMessage) -> str:
 
 async def _draft_claude_md_with_model(cwd: Path, context: CommandContext) -> tuple[str | None, bool]:
     try:
+        scan_summary = _build_claude_md_scan_summary(cwd)
         request_prompt = "\n".join(
             [
-                "Write a concise CLAUDE.md file for this repository.",
+                "Write a CLAUDE.md file for this repository based solely on the project scan below.",
                 "Return markdown only. Do not wrap the answer in code fences.",
-                "Include:",
-                "- a short project overview",
-                "- working rules for this repository",
-                "- useful commands for development and verification",
-                "- any special notes that matter for editing this codebase",
+                "Start with this exact header:",
+                "# CLAUDE.md",
                 "",
-                "Project scan summary:",
-                _build_claude_md_scan_summary(cwd),
+                "This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.",
+                "",
+                "Then include these sections (only if supported by the scan data):",
+                "1. Commands — exact build/test/lint/run commands derived from scripts and config",
+                "2. Architecture — high-level structure: entry points, request flow, key modules",
+                "3. Key conventions — patterns specific to this codebase (tool registration, config, etc.)",
+                "",
+                "Rules:",
+                "- Only use information present in the scan. Do not invent paths, commands, or module names.",
+                "- Be specific: name actual files, modules, and commands found in the scan.",
+                "- Omit obvious practices (write tests, use version control, etc.).",
+                "- Keep it concise — prefer bullets over prose.",
+                "",
+                "Project scan:",
+                scan_summary,
             ]
         )
         system_prompt = "\n".join(
             [
-                "You are generating a project instruction file named CLAUDE.md.",
-                "Write for the local repository only.",
-                "Be specific, concise, and action-oriented.",
-                "Prefer bullets over paragraphs.",
-                "Do not invent commands or paths that are not supported by the project scan.",
+                "You are generating a CLAUDE.md project instruction file.",
+                "Base every claim strictly on the provided project scan.",
+                "Be specific and concrete — name actual files and commands from the scan.",
+                "Do not add generic advice or invent anything not found in the scan.",
             ]
         )
         request = ApiMessageRequest(
             model=context.engine.model,
             messages=[ConversationMessage.from_user_text(request_prompt)],
             system_prompt=system_prompt,
-            max_tokens=1800,
+            max_tokens=4096,
         )
 
         chunks: list[str] = []
