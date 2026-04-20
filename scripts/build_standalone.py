@@ -104,6 +104,10 @@ def main() -> int:
     if not args.skip_frontend_install:
         _run(["npm", "ci", "--no-audit", "--no-fund"], cwd=FRONTEND)
 
+    # Bundle the frontend TypeScript into a single JS file.
+    # This replaces the need to ship node_modules/ in the standalone build.
+    _run(["npm", "run", "build"], cwd=FRONTEND)
+
     env = os.environ.copy()
     if args.node_dir:
         env["HANPLANET_CLI_BUNDLED_NODE_DIR"] = str(Path(args.node_dir).expanduser().resolve())

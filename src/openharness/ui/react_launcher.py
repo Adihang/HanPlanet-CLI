@@ -50,6 +50,17 @@ def _with_bundled_node_path(env: dict[str, str] | None = None) -> dict[str, str]
     return updated
 
 
+def _resolve_node() -> str | None:
+    """Return the node executable path, preferring the bundled runtime."""
+    node_dir = _bundled_node_dir()
+    if node_dir is not None:
+        node_name = "node.exe" if sys.platform == "win32" else "node"
+        node_bin = node_dir / node_name
+        if node_bin.exists():
+            return str(node_bin)
+    return shutil.which("node")
+
+
 def _resolve_tsx(frontend_dir: Path) -> tuple[str, ...]:
     """Resolve the tsx command to invoke directly, bypassing ``npm exec``.
 

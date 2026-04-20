@@ -23,10 +23,12 @@ FRONTEND = ROOT / "frontend" / "terminal"
 
 def _datas() -> list[tuple[str, str]]:
     datas: list[tuple[str, str]] = []
+    # Bundle: ship only the pre-built single-file JS bundle.
+    # In development (tsx) mode, src/ and node_modules/ stay on disk; they are
+    # not needed inside the standalone binary.
     for source, target in (
         (FRONTEND / "package.json", "openharness/_frontend"),
-        (FRONTEND / "src", "openharness/_frontend/src"),
-        (FRONTEND / "node_modules", "openharness/_frontend/node_modules"),
+        (FRONTEND / "dist" / "bundle.js", "openharness/_frontend/dist"),
     ):
         if source.exists():
             datas.append((str(source), target))
