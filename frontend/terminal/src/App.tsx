@@ -377,7 +377,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			if (showPicker && key.tab) {
 				const selected = commandHints[pickerIndex];
 				if (selected) {
-					setInput(selected.name + ' ');
+					setInput(selected.name);
 				}
 				return;
 			}

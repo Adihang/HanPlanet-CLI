@@ -1,5 +1,5 @@
-import React, {useEffect, useState} from 'react';
-import {Box, Text, useInput} from 'ink';
+import React, {useEffect, useRef, useState} from 'react';
+import {Box, Text, useInput, useStdin} from 'ink';
 import chalk from 'chalk';
 
 import {useTheme} from '../theme/ThemeContext.js';
@@ -23,10 +23,45 @@ function MultilineTextInput({
 	promptColor: string;
 }): React.JSX.Element {
 	const [cursorOffset, setCursorOffset] = useState(value.length);
+	const {internal_eventEmitter} = useStdin();
+	const lastSequenceRef = useRef('');
+	// Tracks the last value this component produced via onChange. If the
+	// incoming `value` prop diverges from this, the change came from outside
+	// (tab completion, history recall, programmatic clear) and we should
+	// move the cursor to the end — otherwise the cursor stays wherever the
+	// user had it, which puts subsequent keystrokes in the middle of the
+	// newly-completed text. See HKUDS/OpenHarness#183.
+	const lastInternalValueRef = useRef<string>(value);
 
 	useEffect(() => {
-		setCursorOffset((previous) => Math.min(previous, value.length));
+		if (value === lastInternalValueRef.current) {
+			// Self-authored update; cursor was already positioned by the
+			// handler that called onChange.
+			return;
+		}
+		lastInternalValueRef.current = value;
+		setCursorOffset(value.length);
 	}, [value]);
+
+	const commitValue = (nextValue: string): void => {
+		lastInternalValueRef.current = nextValue;
+		onChange(nextValue);
+	};
+
+	useEffect(() => {
+		if (!focus) {
+			return;
+		}
+
+		const handleRawInput = (chunk: string | Buffer): void => {
+			lastSequenceRef.current = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+		};
+
+		internal_eventEmitter.on('input', handleRawInput);
+		return () => {
+			internal_eventEmitter.removeListener('input', handleRawInput);
+		};
+	}, [focus, internal_eventEmitter]);
 
 	useInput(
 		(input, key) => {
@@ -42,7 +77,7 @@ function MultilineTextInput({
 				if (key.shift) {
 					const nextValue = value.slice(0, cursorOffset) + '\n' + value.slice(cursorOffset);
 					setCursorOffset(cursorOffset + 1);
-					onChange(nextValue);
+					commitValue(nextValue);
 					return;
 				}
 				onSubmit?.(value);
@@ -65,16 +100,29 @@ function MultilineTextInput({
 				}
 				const nextValue = value.slice(0, cursorOffset - 1) + value.slice(cursorOffset);
 				setCursorOffset(cursorOffset - 1);
-				onChange(nextValue);
+				commitValue(nextValue);
 				return;
 			}
 
 			if (key.delete) {
+				// Ink reports the common DEL byte (`0x7f`) as `delete`, even though
+				// many terminals emit it for the Backspace key. Use the raw sequence
+				// to distinguish that case from a true forward-delete escape sequence.
+				if (lastSequenceRef.current === '\x7f' || lastSequenceRef.current === '\x1b\x7f') {
+					if (cursorOffset === 0) {
+						return;
+					}
+					const nextValue = value.slice(0, cursorOffset - 1) + value.slice(cursorOffset);
+					setCursorOffset(cursorOffset - 1);
+					commitValue(nextValue);
+					return;
+				}
+
 				if (cursorOffset >= value.length) {
 					return;
 				}
 				const nextValue = value.slice(0, cursorOffset) + value.slice(cursorOffset + 1);
-				onChange(nextValue);
+				commitValue(nextValue);
 				return;
 			}
 
@@ -84,7 +132,7 @@ function MultilineTextInput({
 
 			const nextValue = value.slice(0, cursorOffset) + input + value.slice(cursorOffset);
 			setCursorOffset(cursorOffset + input.length);
-			onChange(nextValue);
+			commitValue(nextValue);
 		},
 		{isActive: focus},
 	);

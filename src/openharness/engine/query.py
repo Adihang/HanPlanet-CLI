@@ -723,6 +723,14 @@ async def run_query(
             messages.append(coordinator_context_message)
 
         if not final_message.tool_uses:
+            if context.hook_executor is not None:
+                await context.hook_executor.execute(
+                    HookEvent.STOP,
+                    {
+                        "event": HookEvent.STOP.value,
+                        "stop_reason": "tool_uses_empty",
+                    },
+                )
             return
 
         tool_calls = final_message.tool_uses
@@ -899,6 +907,16 @@ async def _execute_tool_call(
     if not decision.allowed:
         if decision.requires_confirmation and context.permission_prompt is not None:
             log.debug("permission prompt for %s: %s", tool_name, decision.reason)
+            if context.hook_executor is not None:
+                await context.hook_executor.execute(
+                    HookEvent.NOTIFICATION,
+                    {
+                        "event": HookEvent.NOTIFICATION.value,
+                        "notification_type": "permission_prompt",
+                        "tool_name": tool_name,
+                        "reason": decision.reason,
+                    },
+                )
             confirmed = await context.permission_prompt(tool_name, decision.reason)
             if not confirmed:
                 log.debug("permission denied by user for %s", tool_name)
@@ -926,6 +944,7 @@ async def _execute_tool_call(
                 "ask_user_prompt": context.ask_user_prompt,
                 **(context.tool_metadata or {}),
             },
+            hook_executor=context.hook_executor,
         ),
     )
     elapsed = time.monotonic() - t0

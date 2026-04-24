@@ -991,7 +991,6 @@ async def test_git_commands_report_repository_state(tmp_path: Path, monkeypatch)
     commit_result = await commit_command.handler(commit_args, context)
     assert "commit" in commit_result.message.lower()
 
-
 def test_run_git_command_uses_utf8_subprocess(monkeypatch):
     calls: list[dict[str, object]] = []
 
@@ -1012,3 +1011,27 @@ def test_run_git_command_uses_utf8_subprocess(monkeypatch):
     assert output == "main"
     assert calls[0]["encoding"] == "utf-8"
     assert calls[0]["errors"] == "replace"
+
+
+def test_quit_is_alias_for_exit():
+    """Regression for #183: /quit should resolve to the same handler as /exit."""
+    reg = create_default_command_registry()
+
+    exit_cmd, _ = reg.lookup("/exit")
+    quit_cmd, _ = reg.lookup("/quit")
+
+    assert exit_cmd is quit_cmd
+    assert quit_cmd.name == "exit"
+
+
+def test_help_and_list_do_not_duplicate_aliases():
+    """Aliases share a SlashCommand object; help/listing must not repeat it."""
+    reg = create_default_command_registry()
+
+    names = [cmd.name for cmd in reg.list_commands()]
+    assert names.count("exit") == 1
+    assert "quit" not in names  # alias is resolvable via lookup, not listed
+
+    help_text = reg.help_text()
+    assert help_text.count("/exit ") == 1
+    assert "/quit" not in help_text
