@@ -1013,6 +1013,28 @@ def test_run_git_command_uses_utf8_subprocess(monkeypatch):
     assert calls[0]["errors"] == "replace"
 
 
+def test_select_release_asset_matches_timestamped_zip():
+    assets = [
+        {
+            "name": "HanPlanet-CLI-windows-x64_202604241544.zip",
+            "browser_download_url": "https://example.com/win-new.zip",
+        },
+        {
+            "name": "HanPlanet-CLI-windows-x64_202604231200.zip",
+            "browser_download_url": "https://example.com/win-old.zip",
+        },
+        {
+            "name": "HanPlanet-CLI-macos-arm64_202604241544.zip",
+            "browser_download_url": "https://example.com/mac.zip",
+        },
+    ]
+
+    name, url = registry_module._select_release_asset(assets, "HanPlanet-CLI-windows-x64")
+
+    assert name == "HanPlanet-CLI-windows-x64_202604241544.zip"
+    assert url == "https://example.com/win-new.zip"
+
+
 def test_quit_is_alias_for_exit():
     """Regression for #183: /quit should resolve to the same handler as /exit."""
     reg = create_default_command_registry()

@@ -170,6 +170,21 @@ def _run_git_command(cwd: str, *args: str) -> tuple[bool, str]:
     return True, output
 
 
+def _select_release_asset(
+    assets: list[dict[str, object]],
+    name_fragment: str,
+) -> tuple[str | None, str | None]:
+    matches = [
+        asset
+        for asset in assets
+        if name_fragment in str(asset.get("name", "")) and str(asset.get("name", "")).endswith(".zip")
+    ]
+    if not matches:
+        return None, None
+    selected = max(matches, key=lambda asset: str(asset.get("name", "")))
+    return str(selected.get("name", "")), str(selected.get("browser_download_url", ""))
+
+
 def _read_text_excerpt(path: Path, max_chars: int = 2000) -> str:
     try:
         content = path.read_text(encoding="utf-8", errors="replace").strip()
@@ -2149,21 +2164,18 @@ def create_default_command_registry(
 
         # ── 2. Select platform asset ──────────────────────────────────────
         if sys.platform == "darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
-            asset_name = "HanPlanet-CLI-macos-arm64.zip"
+            asset_fragment = "HanPlanet-CLI-macos-arm64"
         elif sys.platform == "win32":
-            asset_name = "HanPlanet-CLI-windows-x64.zip"
+            asset_fragment = "HanPlanet-CLI-windows-x64"
         else:
             return CommandResult(
                 message="⚠️ 이 플랫폼용 바이너리 릴리스가 제공되지 않습니다."
             )
 
-        download_url = next(
-            (str(a["browser_download_url"]) for a in assets if a.get("name") == asset_name),
-            None,
-        )
-        if download_url is None:
+        asset_name, download_url = _select_release_asset(assets, asset_fragment)
+        if not asset_name or not download_url:
             return CommandResult(
-                message=f"❌ 릴리스 '{latest_tag}'에서 '{asset_name}' 파일을 찾을 수 없습니다."
+                message=f"❌ 릴리스 '{latest_tag}'에서 '{asset_fragment}'가 포함된 zip 파일을 찾을 수 없습니다."
             )
 
         # ── 3. Locate bundle directory ────────────────────────────────────

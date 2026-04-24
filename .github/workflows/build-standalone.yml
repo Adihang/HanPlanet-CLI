@@ -87,6 +87,11 @@ jobs:
     runs-on: self-hosted
 
     steps:
+      - name: Compute artifact timestamp
+        id: stamp
+        shell: bash
+        run: echo "value=$(date +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
@@ -98,3 +103,11 @@ jobs:
         with:
           name: HanPlanet-CLI-windows-x64
           path: /Volumes/HANPLANET_HDD/Hanplanet/HanPlanet-CLI
+
+      - name: Stamp HDD filenames
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /Volumes/HANPLANET_HDD/Hanplanet/HanPlanet-CLI
+          mv HanPlanet-CLI-macos-arm64.zip "HanPlanet-CLI-macos-arm64_${{ steps.stamp.outputs.value }}.zip"
+          mv HanPlanet-CLI-windows-x64.zip "HanPlanet-CLI-windows-x64_${{ steps.stamp.outputs.value }}.zip"

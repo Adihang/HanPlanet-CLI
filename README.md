@@ -670,16 +670,16 @@ OpenAI SDK 예외에서 `str(exc)`가 빈 문자열을 반환하는 경우(`"API
 ```
 git tag v*.*.* && git push origin v*.*.*
   │
-  ├─ Build (macos-14)      → HanPlanet-CLI-macos-arm64.zip  ─┐
-  ├─ Build (windows-latest) → HanPlanet-CLI-windows-x64.zip  ─┤
+  ├─ Build (macos-14)      → HanPlanet-CLI-macos-arm64.zip           ─┐
+  ├─ Build (windows-latest) → HanPlanet-CLI-windows-x64.zip          ─┤
   │                                                            │
   ├─ Release (태그일 때만)  → GitHub Releases에 두 zip 첨부   │
   │                                                            │
   └─ Deploy (self-hosted)  ← 두 zip 다운로드                  ┘
        │
        └─ /Volumes/HANPLANET_HDD/Hanplanet/HanPlanet-CLI/
-              ├── HanPlanet-CLI-macos-arm64.zip
-              └── HanPlanet-CLI-windows-x64.zip
+              ├── HanPlanet-CLI-macos-arm64_YYYYMMDDHHMM.zip
+              └── HanPlanet-CLI-windows-x64_YYYYMMDDHHMM.zip
 ```
 
 #### 트리거
@@ -705,6 +705,12 @@ uv run python scripts/build_standalone.py --clean --skip-frontend-install
 
 Windows artifact(`HanPlanet-CLI-windows-x64.zip`) 안의 실행 파일은 `dist\HanPlanet-CLI\hanplanet.exe` 이다.
 Windows는 macOS/Linux처럼 shell alias가 자동으로 생기지 않으므로 `hanplanet.exe`를 직접 실행한다.
+
+HDD에 복사된 파일은 배포 시각을 붙여 저장된다. 따라서 다운로드 링크나 목록 조회 쪽에서는
+정확한 파일명 하나를 고정 참조하지 말고 다음처럼 플랫폼 prefix가 포함된 zip 파일을 찾는 방식으로 처리해야 한다.
+
+- Windows: `HanPlanet-CLI-windows-x64` 포함, `.zip`로 끝나는 최신 파일
+- macOS: `HanPlanet-CLI-macos-arm64` 포함, `.zip`로 끝나는 최신 파일
 
 #### 정식 배포 절차
 
