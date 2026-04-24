@@ -115,15 +115,6 @@ def build_runtime_system_prompt(
     if not is_coordinator_mode() and settings.system_prompt is None:
         sections[0] = build_system_prompt(cwd=str(cwd))
 
-    # Inject a language instruction so the model responds in the configured language
-    # (설정된 언어로 응답하도록 언어 지시문을 시스템 프롬프트에 추가)
-    if settings.language:
-        sections.append(
-            f"# Language Instruction\n"
-            f"Always respond in **{settings.language}**, regardless of what language the user writes in. "
-            f"All explanations, code comments, and messages must be in {settings.language}."
-        )
-
     if settings.fast_mode:
         sections.append(
             "# Session Mode\nFast mode is enabled. Prefer concise replies, minimal tool use, and quicker progress over exhaustive exploration."
@@ -194,5 +185,17 @@ def build_runtime_system_prompt(
                         ]
                     )
                 sections.append("\n".join(lines))
+
+    # Language instruction goes last so it is the closest instruction to the model's
+    # first token — models with recency bias (e.g. Gemma) are more likely to follow it.
+    # (언어 지시문을 맨 마지막에 배치 — recency bias가 있는 모델이 더 잘 따름)
+    if settings.language:
+        sections.append(
+            f"# Language Instruction\n"
+            f"IMPORTANT: You MUST respond in {settings.language} only. "
+            f"Always respond in **{settings.language}**, regardless of what language the user writes in. "
+            f"All explanations, code comments, and messages must be in {settings.language}. "
+            f"Do not respond in English unless {settings.language} is English."
+        )
 
     return "\n\n".join(section for section in sections if section.strip())
