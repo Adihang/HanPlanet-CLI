@@ -92,6 +92,7 @@ def test_build_system_prompt_tells_agent_to_edit_files_directly():
     assert "make the file changes yourself with tools" in prompt
     assert "Do not answer with code blocks and ask the user to copy, paste, or apply them manually" in prompt
     assert "unless the user explicitly asks for instructions only" in prompt
+    assert "Do not ask the user to open, read, copy, paste, or manually edit files" in prompt
 
 
 def test_build_system_prompt_warns_edit_file_requires_exact_old_str():
