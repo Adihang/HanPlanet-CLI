@@ -821,9 +821,12 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     if openharness_base:
         updates["base_url"] = openharness_base
     elif not profile_has_base_url:
-        generic_base = os.environ.get("ANTHROPIC_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
-        if generic_base:
-            updates["base_url"] = generic_base
+        active_provider = active_profile.provider
+        anthropic_base = os.environ.get("ANTHROPIC_BASE_URL") if is_claude_family_provider(active_provider) else None
+        openai_base = os.environ.get("OPENAI_BASE_URL")
+        provider_base = anthropic_base or openai_base
+        if provider_base:
+            updates["base_url"] = provider_base
 
     max_tokens = os.environ.get("OPENHARNESS_MAX_TOKENS")
     if max_tokens:

@@ -482,6 +482,15 @@ def refresh_runtime_client(bundle: RuntimeBundle) -> None:
             default_model=settings.model,
         )
     bundle.engine.set_model(settings.model)
+    bundle.engine.set_system_prompt(
+        build_runtime_system_prompt(
+            settings,
+            cwd=bundle.cwd,
+            latest_user_prompt=_last_user_text(bundle.engine.messages),
+            extra_skill_dirs=bundle.extra_skill_dirs,
+            extra_plugin_roots=bundle.extra_plugin_roots,
+        )
+    )
     sync_app_state(bundle)
 
 
