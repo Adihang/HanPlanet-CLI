@@ -209,7 +209,7 @@ export function PromptInput({
 				value={input}
 				onChange={setInput}
 				onSubmit={suppressSubmit || busy ? noop : onSubmit}
-				focus={!busy}
+				focus={focus && !busy}
 				promptPrefix={promptPrefix}
 				promptColor={theme.colors.primary}
 			/>
