@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/index.tsx",
-    "build": "esbuild src/index.tsx --bundle --platform=node --format=esm --external:react-devtools-core --outfile=dist/bundle.js --log-level=warning"
+    "build": "esbuild src/index.tsx --bundle --platform=node --format=esm --alias:react-devtools-core=./src/shims/react-devtools-core.ts --outfile=dist/bundle.js --log-level=warning"
   },
   "dependencies": {
     "cli-spinners": "^3.4.0",
@@ -19,6 +19,7 @@
     "@types/node": "^22.13.10",
     "@types/react": "^18.3.12",
     "esbuild": "^0.25.0",
+    "react-devtools-core": "^4.28.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }
