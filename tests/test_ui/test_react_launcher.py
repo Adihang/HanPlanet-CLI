@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import pytest
 from types import SimpleNamespace
+from pathlib import Path
 
 from openharness.ui.app import run_print_mode, run_repl, run_task_worker
 from openharness.engine.stream_events import AssistantTurnComplete
 from openharness.engine.messages import ConversationMessage, TextBlock
-from openharness.ui.react_launcher import build_backend_command
+from openharness.ui.react_launcher import build_backend_command, launch_react_tui
 
 
 class _AsyncIterator:
@@ -45,6 +46,35 @@ def test_build_backend_command_uses_self_executable_when_frozen(monkeypatch):
     assert command[:2] == ["/opt/HanPlanet-CLI/hanplanet-cli", "--backend-only"]
     assert "-m" not in command
     assert "openharness" not in command
+
+
+@pytest.mark.asyncio
+async def test_launch_react_tui_uses_bundled_bundle_js_when_present(tmp_path: Path, monkeypatch):
+    frontend_dir = tmp_path / "_frontend"
+    dist_dir = frontend_dir / "dist"
+    dist_dir.mkdir(parents=True)
+    (frontend_dir / "package.json").write_text("{}", encoding="utf-8")
+    (dist_dir / "bundle.js").write_text("console.log('bundle');", encoding="utf-8")
+
+    seen: dict[str, object] = {}
+
+    class _Proc:
+        async def wait(self):
+            return 0
+
+    async def _fake_exec(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return _Proc()
+
+    monkeypatch.setattr("openharness.ui.react_launcher.get_frontend_dir", lambda: frontend_dir)
+    monkeypatch.setattr("openharness.ui.react_launcher._resolve_node", lambda: "/opt/node/bin/node")
+    monkeypatch.setattr("openharness.ui.react_launcher.asyncio.create_subprocess_exec", _fake_exec)
+
+    code = await launch_react_tui(prompt="hi", cwd="/tmp/demo")
+
+    assert code == 0
+    assert seen["args"] == ("/opt/node/bin/node", str(dist_dir / "bundle.js"))
 
 
 @pytest.mark.asyncio

@@ -115,6 +115,12 @@ def get_frontend_dir() -> Path:
     return pkg_frontend
 
 
+def _bundled_frontend_entry(frontend_dir: Path) -> Path | None:
+    """Return the prebuilt frontend bundle entrypoint when present."""
+    bundle = frontend_dir / "dist" / "bundle.js"
+    return bundle if bundle.exists() else None
+
+
 def build_backend_command(
     *,
     cwd: str | None = None,
@@ -168,49 +174,6 @@ async def launch_react_tui(
     if not package_json.exists():
         raise RuntimeError(f"React terminal frontend is missing: {package_json}")
 
-    npm = _resolve_npm()
-
-    if not (frontend_dir / "node_modules").exists():
-        import sys
-        from rich.console import Console
-        from rich.progress import Progress, SpinnerColumn, TextColumn
-
-        _con = Console(file=sys.stderr)
-        _con.print()
-        # Installing React TUI dependencies on first run (최초 실행 시 의존성 설치)
-        _con.print("[bold cyan]📦  React TUI 의존성 설치 중...[/bold cyan]")
-        _con.print("[dim]  (최초 실행 시 1회. 잠시 기다려주세요)[/dim]")
-
-        install = await asyncio.create_subprocess_exec(
-            npm,
-            "install",
-            "--no-fund",
-            "--no-audit",
-            cwd=str(frontend_dir),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[cyan]npm install[/cyan]"),
-            console=_con,
-            transient=True,
-        ) as _progress:
-            _progress.add_task("installing", total=None)
-            ret = await install.wait()
-
-        if ret != 0:
-            _err = b""
-            if install.stderr:
-                _err = await install.stderr.read()
-            raise RuntimeError(
-                f"npm install 실패 (exit {ret}):\n{_err.decode(errors='replace')}"
-            )
-
-        _con.print("[bold green]✅  설치 완료![/bold green]")
-        _con.print()
-
     env = _with_bundled_node_path(os.environ.copy())
     env["OPENHARNESS_FRONTEND_CONFIG"] = json.dumps(
         {
@@ -228,16 +191,73 @@ async def launch_react_tui(
             "theme": _resolve_theme(),
         }
     )
-    tsx_cmd = _resolve_tsx(frontend_dir)
-    process = await asyncio.create_subprocess_exec(
-        *tsx_cmd,
-        "src/index.tsx",
-        cwd=str(frontend_dir),
-        env=env,
-        stdin=None,
-        stdout=None,
-        stderr=None,
-    )
+    bundled_entry = _bundled_frontend_entry(frontend_dir)
+    if bundled_entry is not None:
+        node = _resolve_node()
+        if not node:
+            raise RuntimeError("Bundled frontend is present but no Node.js runtime is available.")
+        process = await asyncio.create_subprocess_exec(
+            node,
+            str(bundled_entry),
+            cwd=str(frontend_dir),
+            env=env,
+            stdin=None,
+            stdout=None,
+            stderr=None,
+        )
+    else:
+        npm = _resolve_npm()
+
+        if not (frontend_dir / "node_modules").exists():
+            import sys
+            from rich.console import Console
+            from rich.progress import Progress, SpinnerColumn, TextColumn
+
+            _con = Console(file=sys.stderr)
+            _con.print()
+            _con.print("[bold cyan]📦  React TUI 의존성 설치 중...[/bold cyan]")
+            _con.print("[dim]  (최초 실행 시 1회. 잠시 기다려주세요)[/dim]")
+
+            install = await asyncio.create_subprocess_exec(
+                npm,
+                "install",
+                "--no-fund",
+                "--no-audit",
+                cwd=str(frontend_dir),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[cyan]npm install[/cyan]"),
+                console=_con,
+                transient=True,
+            ) as _progress:
+                _progress.add_task("installing", total=None)
+                ret = await install.wait()
+
+            if ret != 0:
+                _err = b""
+                if install.stderr:
+                    _err = await install.stderr.read()
+                raise RuntimeError(
+                    f"npm install 실패 (exit {ret}):\n{_err.decode(errors='replace')}"
+                )
+
+            _con.print("[bold green]✅  설치 완료![/bold green]")
+            _con.print()
+
+        tsx_cmd = _resolve_tsx(frontend_dir)
+        process = await asyncio.create_subprocess_exec(
+            *tsx_cmd,
+            "src/index.tsx",
+            cwd=str(frontend_dir),
+            env=env,
+            stdin=None,
+            stdout=None,
+            stderr=None,
+        )
     return await process.wait()
 
 
