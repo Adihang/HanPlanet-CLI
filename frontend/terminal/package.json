@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/index.tsx",
-    "build": "esbuild src/index.tsx --bundle --platform=node --format=esm --alias:react-devtools-core=./src/shims/react-devtools-core.ts --outfile=dist/bundle.js --log-level=warning"
+    "build": "esbuild src/index.tsx --bundle --platform=node --format=esm --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --alias:react-devtools-core=./src/shims/react-devtools-core.ts --outfile=dist/bundle.js --log-level=warning"
   },
   "dependencies": {
     "cli-spinners": "^3.4.0",
