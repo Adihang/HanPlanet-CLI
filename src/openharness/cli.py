@@ -870,7 +870,10 @@ def plugin_uninstall(
     """Uninstall a plugin."""
     from openharness.plugins.installer import uninstall_plugin
 
-    uninstall_plugin(name)
+    try:
+        uninstall_plugin(name)
+    except ValueError as exc:
+        raise typer.BadParameter("invalid plugin name") from exc
     print(f"Uninstalled plugin: {name}")
 
 
@@ -1228,6 +1231,7 @@ _PROVIDER_LABELS: dict[str, str] = {
     "moonshot": "Moonshot (Kimi)",
     "gemini": "Google Gemini",
     "minimax": "MiniMax",
+    "modelscope": "ModelScope",
 }
 
 _AUTH_SOURCE_LABELS: dict[str, str] = {
@@ -1242,6 +1246,7 @@ _AUTH_SOURCE_LABELS: dict[str, str] = {
     "moonshot_api_key": "Moonshot API key",
     "gemini_api_key": "Gemini API key",
     "minimax_api_key": "MiniMax API key",
+    "modelscope_api_key": "ModelScope API key",
 }
 
 
@@ -1725,7 +1730,7 @@ def _login_provider(provider: str) -> None:
         _bind_external_provider(provider)
         return
 
-    if provider in ("anthropic", "openai", "dashscope", "bedrock", "vertex", "moonshot", "gemini", "minimax"):
+    if provider in ("anthropic", "openai", "dashscope", "bedrock", "vertex", "moonshot", "gemini", "minimax", "modelscope"):
         label = _PROVIDER_LABELS.get(provider, provider)
         flow = ApiKeyFlow(provider=provider, prompt_text=f"Enter your {label} API key")
         try:
@@ -1828,7 +1833,7 @@ def auth_login(
     """Interactively authenticate with a provider.
 
     Run without arguments to choose a provider from a menu.
-    Supported providers: anthropic, anthropic_claude, openai, openai_codex, copilot, dashscope, bedrock, vertex, moonshot, minimax.
+    Supported providers: anthropic, anthropic_claude, openai, openai_codex, copilot, dashscope, bedrock, vertex, moonshot, minimax, modelscope.
     """
     if provider is None:
         print("Select a provider to authenticate:", flush=True)

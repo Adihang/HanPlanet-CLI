@@ -101,7 +101,10 @@ def _python_grep_files(
 ) -> str:
     # Python fallback (kept for portability).
     flags = 0 if case_sensitive else re.IGNORECASE
-    compiled = re.compile(pattern, flags)
+    try:
+        compiled = re.compile(pattern, flags)
+    except re.error as exc:
+        return f"(invalid regex pattern '{pattern}': {exc})"
     collected: list[str] = []
 
     for path in paths:
@@ -186,14 +189,14 @@ async def _rg_grep(
             cmd,
             cwd=root,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
     else:
         process = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=str(root),
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
             limit=8 * 1024 * 1024,  # 8 MB per line — avoids LimitOverrunError on long lines
         )
 
@@ -254,14 +257,14 @@ async def _rg_grep_file(
             cmd,
             cwd=path.parent,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
     else:
         process = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=str(path.parent),
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
             limit=8 * 1024 * 1024,  # 8 MB per line — avoids LimitOverrunError on long lines
         )
 

@@ -40,7 +40,7 @@ from openharness.engine.messages import ToolResultBlock
 from openharness.hooks import HookExecutionContext, HookExecutor, HookEvent
 from openharness.hooks.loader import HookRegistry
 from openharness.hooks.schemas import PromptHookDefinition
-from openharness.engine.query import QueryContext, _execute_tool_call
+from openharness.engine.query import QueryContext, _execute_tool_call, _is_prompt_too_long_error
 
 
 @dataclass
@@ -158,6 +158,38 @@ class PromptTooLongThenSuccessApiClient:
         )
 
 
+class RecordingApiClient:
+    def __init__(self, text: str = "ok") -> None:
+        self.requests = []
+        self._text = text
+
+    async def stream_message(self, request):
+        self.requests.append(request)
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text=self._text)]),
+            usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            stop_reason=None,
+        )
+
+
+class MaxTokensTooLargeThenSuccessApiClient:
+    def __init__(self) -> None:
+        self.requests = []
+
+    async def stream_message(self, request):
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            raise RequestFailure(
+                "max_tokens is too large: 120000. This model supports at most "
+                "32000 completion tokens, whereas you provided 120000."
+            )
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="after token clamp")]),
+            usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            stop_reason=None,
+        )
+
+
 class EmptyAssistantApiClient:
     def __init__(self) -> None:
         self.requests = []
@@ -265,6 +297,22 @@ class _NoopApiClient:
             yield None
 
 
+def test_query_prompt_too_long_detection_handles_llama_cpp_errors():
+    assert _is_prompt_too_long_error(
+        RequestFailure("exceed_context_size_error: prompt exceeds the available context size")
+    )
+
+
+def test_query_prompt_too_long_detection_handles_openai_context_length_errors():
+    assert _is_prompt_too_long_error(
+        RequestFailure(
+            "Input tokens exceed the configured limit of 922000 tokens. "
+            "Your messages resulted in 3591869 tokens. Please reduce the length of the messages. "
+            "code='context_length_exceeded'"
+        )
+    )
+
+
 @pytest.mark.asyncio
 async def test_query_engine_plain_text_reply(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
@@ -295,6 +343,49 @@ async def test_query_engine_plain_text_reply(tmp_path: Path, monkeypatch):
     assert engine.total_usage.input_tokens == 10
     assert engine.total_usage.output_tokens == 5
     assert len(engine.messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_query_engine_clamps_oversized_max_tokens_before_request(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    client = RecordingApiClient()
+    engine = QueryEngine(
+        api_client=client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="openai-compatible-model",
+        system_prompt="system",
+        max_tokens=400_000,
+    )
+
+    events = [event async for event in engine.submit_message("hello")]
+
+    assert client.requests[0].max_tokens == 128_000
+    assert any(isinstance(event, StatusEvent) and "safe per-request output cap" in event.message for event in events)
+    assert isinstance(events[-1], AssistantTurnComplete)
+
+
+@pytest.mark.asyncio
+async def test_query_engine_retries_with_provider_completion_token_limit(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    client = MaxTokensTooLargeThenSuccessApiClient()
+    engine = QueryEngine(
+        api_client=client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="openai-compatible-model",
+        system_prompt="system",
+        max_tokens=120_000,
+        max_turns=1,
+    )
+
+    events = [event async for event in engine.submit_message("hello")]
+
+    assert [request.max_tokens for request in client.requests] == [120_000, 32_000]
+    assert any(isinstance(event, StatusEvent) and "provider limit 32000" in event.message for event in events)
+    assert isinstance(events[-1], AssistantTurnComplete)
 
 
 @pytest.mark.asyncio
@@ -1354,6 +1445,19 @@ class _BoomTool(BaseTool):
         raise RuntimeError("boom")
 
 
+class _LargeOutputTool(BaseTool):
+    name = "mcp__playwright__browser_snapshot"
+    description = "Returns a large browser snapshot."
+    input_model = _OkInput
+
+    def is_read_only(self, arguments: BaseModel) -> bool:
+        return True
+
+    async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
+        del arguments, context
+        return ToolResult(output="snapshot-line\n" * 40)
+
+
 @pytest.mark.asyncio
 async def test_query_engine_synthesizes_tool_result_when_parallel_tool_raises(tmp_path: Path):
     """Parallel tool calls must each yield a tool_result even when one tool raises.
@@ -1418,6 +1522,66 @@ async def test_query_engine_synthesizes_tool_result_when_parallel_tool_raises(tm
 
     assert isinstance(events[-1], AssistantTurnComplete)
     assert events[-1].message.text == "Recovered from the failure."
+
+
+@pytest.mark.asyncio
+async def test_query_engine_offloads_large_tool_result_outputs(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("OPENHARNESS_TOOL_OUTPUT_INLINE_CHARS", "256")
+    monkeypatch.setenv("OPENHARNESS_TOOL_OUTPUT_PREVIEW_CHARS", "128")
+    registry = ToolRegistry()
+    registry.register(_LargeOutputTool())
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_snapshot",
+                                name="mcp__playwright__browser_snapshot",
+                                input={},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={},
+    )
+
+    events = [event async for event in engine.submit_message("snapshot")]
+
+    completed = [event for event in events if isinstance(event, ToolExecutionCompleted)]
+    assert len(completed) == 1
+    assert completed[0].output.startswith("[Tool output truncated]")
+    assert "snapshot-line" in completed[0].output
+
+    user_tool_messages = [
+        msg for msg in engine.messages if msg.role == "user" and any(isinstance(block, ToolResultBlock) for block in msg.content)
+    ]
+    result_blocks = [block for block in user_tool_messages[0].content if isinstance(block, ToolResultBlock)]
+    inline = result_blocks[0].content
+    assert "Full output saved to:" in inline
+    assert "Original size:" in inline
+    assert inline.count("snapshot-line") < 40
+    artifact_line = next(line for line in inline.splitlines() if line.startswith("Full output saved to:"))
+    artifact_path = Path(artifact_line.removeprefix("Full output saved to:").strip())
+    assert artifact_path.exists()
+    assert artifact_path.read_text(encoding="utf-8") == "snapshot-line\n" * 40
+    assert str(artifact_path) in engine.tool_metadata["task_focus_state"]["active_artifacts"]
 
 
 @pytest.mark.asyncio

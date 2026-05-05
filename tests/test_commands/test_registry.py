@@ -112,6 +112,19 @@ async def test_permissions_command_supports_explicit_remote_admin_opt_in(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_stop_command_explains_interrupt_paths(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/stop")
+    assert command is not None
+
+    result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
+
+    assert "/stop" in result.message
+    assert "Esc/Ctrl+C" in result.message
+
+
+@pytest.mark.asyncio
 async def test_plugin_command_is_marked_local_only(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
@@ -148,6 +161,24 @@ async def test_reload_plugins_command_supports_explicit_remote_admin_opt_in(tmp_
 
 
 @pytest.mark.asyncio
+async def test_bridge_command_is_marked_local_only(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    command, _ = registry.lookup("/bridge spawn id")
+    assert command is not None
+    assert command.remote_invocable is False
+
+
+@pytest.mark.asyncio
+async def test_bridge_command_supports_explicit_remote_admin_opt_in(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    command, _ = registry.lookup("/bridge spawn id")
+    assert command is not None
+    assert getattr(command, "remote_admin_opt_in", False) is True
+
+
+@pytest.mark.asyncio
 async def test_memory_show_rejects_path_traversal(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
@@ -157,7 +188,7 @@ async def test_memory_show_rejects_path_traversal(tmp_path: Path, monkeypatch):
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
-    assert result.message == "Memory entry path must stay within the project memory directory."
+    assert result.message == "Memory entry path must stay within the configured memory directory."
 
 
 @pytest.mark.asyncio
@@ -201,6 +232,155 @@ async def test_model_command_accepts_direct_value(tmp_path: Path, monkeypatch):
 
     assert "gpt-5.4" in result.message
     assert load_settings().model == "gpt-5.4"
+
+
+@pytest.mark.asyncio
+async def test_model_command_lists_profile_model_allowlist(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    save_settings(
+        Settings().model_copy(
+            update={
+                "active_profile": "local-llm",
+                "provider": "openai",
+                "api_format": "openai",
+                "base_url": "http://localhost:8000/v1",
+                "model": "deepseek-chat",
+                "profiles": {
+                    "local-llm": {
+                        "label": "Local LLM",
+                        "provider": "openai",
+                        "api_format": "openai",
+                        "auth_source": "openai_api_key",
+                        "default_model": "deepseek-chat",
+                        "last_model": "deepseek-chat",
+                        "base_url": "http://localhost:8000/v1",
+                        "allowed_models": ["deepseek-chat", "qwen-vl"],
+                    }
+                },
+            }
+        )
+    )
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/model list")
+    assert command is not None
+
+    result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
+
+    assert "Switchable models for profile 'local-llm'" in result.message
+    assert "- deepseek-chat" in result.message
+    assert "- qwen-vl" in result.message
+
+
+@pytest.mark.asyncio
+async def test_model_command_adds_model_to_profile_allowlist(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    save_settings(
+        Settings().model_copy(
+            update={
+                "active_profile": "local-llm",
+                "provider": "openai",
+                "api_format": "openai",
+                "base_url": "http://localhost:8000/v1",
+                "model": "deepseek-chat",
+                "profiles": {
+                    "local-llm": {
+                        "label": "Local LLM",
+                        "provider": "openai",
+                        "api_format": "openai",
+                        "auth_source": "openai_api_key",
+                        "default_model": "deepseek-chat",
+                        "last_model": "deepseek-chat",
+                        "base_url": "http://localhost:8000/v1",
+                        "allowed_models": ["deepseek-chat"],
+                    }
+                },
+            }
+        )
+    )
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/model add qwen-vl")
+    assert command is not None
+
+    result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
+
+    assert result.refresh_runtime is True
+    assert load_settings().resolve_profile()[1].allowed_models == ["deepseek-chat", "qwen-vl"]
+
+
+@pytest.mark.asyncio
+async def test_model_command_remove_current_model_resets_to_default(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    save_settings(
+        Settings().model_copy(
+            update={
+                "active_profile": "local-llm",
+                "provider": "openai",
+                "api_format": "openai",
+                "base_url": "http://localhost:8000/v1",
+                "model": "qwen-vl",
+                "profiles": {
+                    "local-llm": {
+                        "label": "Local LLM",
+                        "provider": "openai",
+                        "api_format": "openai",
+                        "auth_source": "openai_api_key",
+                        "default_model": "deepseek-chat",
+                        "last_model": "qwen-vl",
+                        "base_url": "http://localhost:8000/v1",
+                        "allowed_models": ["deepseek-chat", "qwen-vl"],
+                    }
+                },
+            }
+        )
+    )
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+    command, args = registry.lookup("/model remove qwen-vl")
+    assert command is not None
+
+    result = await command.handler(args, context)
+
+    profile = load_settings().resolve_profile()[1]
+    assert result.refresh_runtime is True
+    assert profile.allowed_models == ["deepseek-chat"]
+    assert profile.last_model == ""
+    assert context.engine.model == "deepseek-chat"
+
+
+@pytest.mark.asyncio
+async def test_model_command_clear_removes_profile_allowlist(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    save_settings(
+        Settings().model_copy(
+            update={
+                "active_profile": "local-llm",
+                "provider": "openai",
+                "api_format": "openai",
+                "base_url": "http://localhost:8000/v1",
+                "model": "deepseek-chat",
+                "profiles": {
+                    "local-llm": {
+                        "label": "Local LLM",
+                        "provider": "openai",
+                        "api_format": "openai",
+                        "auth_source": "openai_api_key",
+                        "default_model": "deepseek-chat",
+                        "last_model": "deepseek-chat",
+                        "base_url": "http://localhost:8000/v1",
+                        "allowed_models": ["deepseek-chat", "qwen-vl"],
+                    }
+                },
+            }
+        )
+    )
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/model clear")
+    assert command is not None
+
+    result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
+
+    assert result.refresh_runtime is True
+    assert load_settings().resolve_profile()[1].allowed_models == []
 
 
 @pytest.mark.asyncio
@@ -666,6 +846,9 @@ async def test_version_context_and_share_commands(tmp_path: Path, monkeypatch):
 async def test_auth_feedback_and_project_context_commands(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    # Prevent env var leakage from overriding the configured api_key
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 
@@ -724,7 +907,7 @@ async def test_agents_session_files_and_reload_plugins_commands(tmp_path: Path, 
 
     files_command, files_args = registry.lookup("/files app.py")
     files_result = await files_command.handler(files_args, context)
-    assert "src/app.py" in files_result.message
+    assert "src/app.py" in files_result.message.replace("\\", "/")
 
     files_dirs_command, files_dirs_args = registry.lookup("/files dirs")
     files_dirs_result = await files_dirs_command.handler(files_dirs_args, context)

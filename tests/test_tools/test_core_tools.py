@@ -86,6 +86,10 @@ async def test_glob_and_grep(tmp_path: Path):
     glob_result = await GlobTool().execute(GlobToolInput(pattern="*.py"), context)
     assert glob_result.output.splitlines() == ["a.py", "b.py"]
 
+    aliased_input = GlobTool().input_model.model_validate({"path": "*.py"})
+    aliased_glob_result = await GlobTool().execute(aliased_input, context)
+    assert aliased_glob_result.output.splitlines() == ["a.py", "b.py"]
+
     grep_result = await GrepTool().execute(
         GrepToolInput(pattern=r"def\s+beta", file_glob="*.py"),
         context,
@@ -97,6 +101,24 @@ async def test_glob_and_grep(tmp_path: Path):
         context,
     )
     assert "a.py:1:def alpha():" in file_root_result.output
+
+
+@pytest.mark.asyncio
+async def test_glob_tool_accepts_absolute_patterns(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("openharness.tools.glob_tool.shutil.which", lambda _: None)
+    context = ToolExecutionContext(cwd=tmp_path.parent)
+    nested = tmp_path / "pkg"
+    nested.mkdir()
+    (nested / "a.py").write_text("print('a')\n", encoding="utf-8")
+    (nested / "b.txt").write_text("b\n", encoding="utf-8")
+
+    result = await GlobTool().execute(
+        GlobToolInput(pattern=str(tmp_path / "**" / "*.py")),
+        context,
+    )
+
+    assert result.is_error is False
+    assert result.output.replace("\\", "/").splitlines() == ["pkg/a.py"]
 
 
 @pytest.mark.asyncio
@@ -214,13 +236,13 @@ async def test_lsp_tool(tmp_path: Path):
         LspToolInput(operation="go_to_definition", file_path="pkg/app.py", symbol="greet"),
         context,
     )
-    assert "pkg/utils.py:1:1" in definition.output
+    assert "pkg/utils.py:1:1" in definition.output.replace("\\", "/")
 
     references = await LspTool().execute(
         LspToolInput(operation="find_references", file_path="pkg/app.py", symbol="greet"),
         context,
     )
-    assert "pkg/app.py:1:from pkg.utils import greet" in references.output
+    assert "pkg/app.py:1:from pkg.utils import greet" in references.output.replace("\\", "/")
 
     hover = await LspTool().execute(
         LspToolInput(operation="hover", file_path="pkg/app.py", symbol="greet"),

@@ -33,6 +33,7 @@ from openharness.prompts import build_runtime_system_prompt
 from openharness.ui.runtime import RuntimeBundle, _last_user_text, build_runtime, close_runtime, start_runtime
 
 from ohmo.gateway.config import load_gateway_config
+from ohmo.memory import create_memory_command_backend
 from ohmo.prompts import build_ohmo_system_prompt
 from ohmo.session_storage import OhmoSessionBackend
 from ohmo.workspace import get_plugins_dir, get_skills_dir, initialize_workspace
@@ -58,6 +59,10 @@ _CHANNEL_THINKING_PHRASES_EN = (
 _TEXT_PREVIEW_BYTES = 4096
 _TEXT_PREVIEW_CHARS = 900
 _BINARY_HEAD_BYTES = 32
+_IMAGE_FALLBACK_NOTE = (
+    "[Image attachment omitted because the active model does not support image input. "
+    "Use the attachment paths and summaries above if needed.]"
+)
 
 
 @dataclass(frozen=True)
@@ -138,6 +143,8 @@ class OhmoSessionRuntimePool:
             restore_tool_metadata=snapshot.get("tool_metadata") if snapshot else None,
             extra_skill_dirs=(str(get_skills_dir(self._workspace)),),
             extra_plugin_roots=(str(get_plugins_dir(self._workspace)),),
+            memory_backend=create_memory_command_backend(self._workspace),
+            include_project_memory=False,
         )
         if snapshot and snapshot.get("session_id"):
             bundle.session_id = str(snapshot["session_id"])
@@ -206,6 +213,8 @@ class OhmoSessionRuntimePool:
                     session_id=bundle.session_id,
                     extra_skill_dirs=bundle.extra_skill_dirs,
                     extra_plugin_roots=bundle.extra_plugin_roots,
+                    memory_backend=create_memory_command_backend(self._workspace),
+                    include_project_memory=False,
                 ),
             )
             async for update in self._stream_command_result(
@@ -326,6 +335,39 @@ class OhmoSessionRuntimePool:
         )
         try:
             async for event in bundle.engine.submit_message(user_message):
+                if isinstance(event, ErrorEvent) and _should_retry_without_image_input(
+                    event.message,
+                    bundle.engine.messages,
+                ):
+                    logger.warning(
+                        "ohmo runtime image input rejected; retrying without image blocks session_key=%s session_id=%s message=%r",
+                        session_key,
+                        bundle.session_id,
+                        _content_snippet(event.message),
+                    )
+                    _strip_image_blocks_from_engine_history(bundle.engine)
+                    yield GatewayStreamUpdate(
+                        kind="progress",
+                        text=_format_channel_progress(
+                            channel=message.channel,
+                            kind="image_fallback",
+                            text=event.message,
+                            session_key=session_key,
+                            content=user_prompt,
+                        ),
+                        metadata={"_progress": True, "_session_key": session_key, "_image_fallback": True},
+                    )
+                    async for retry_event in bundle.engine.continue_pending(max_turns=bundle.engine.max_turns):
+                        async for update in self._convert_stream_event(
+                            event=retry_event,
+                            bundle=bundle,
+                            message=message,
+                            session_key=session_key,
+                            content=user_prompt,
+                            reply_parts=reply_parts,
+                        ):
+                            yield update
+                    break
                 async for update in self._convert_stream_event(
                     event=event,
                     bundle=bundle,
@@ -508,6 +550,8 @@ class OhmoSessionRuntimePool:
             restore_tool_metadata=getattr(bundle.engine, "tool_metadata", {}) or {},
             extra_skill_dirs=(str(get_skills_dir(self._workspace)),),
             extra_plugin_roots=(str(get_plugins_dir(self._workspace)),),
+            memory_backend=create_memory_command_backend(self._workspace),
+            include_project_memory=False,
         )
         refreshed.session_id = prior_session_id
         await start_runtime(refreshed)
@@ -533,6 +577,7 @@ class OhmoSessionRuntimePool:
             latest_user_prompt=latest_user_prompt,
             extra_skill_dirs=getattr(bundle, "extra_skill_dirs", ()),
             extra_plugin_roots=getattr(bundle, "extra_plugin_roots", ()),
+            include_project_memory=False,
         )
 
 
@@ -595,6 +640,10 @@ def _format_channel_progress(
                 return "🛠️ " + text.replace("Using ", "正在使用 ", 1)
             return f"🛠️ {text}"
         return text if text.startswith("🛠️ ") else f"🛠️ {text}"
+    if kind == "image_fallback":
+        if prefers_chinese:
+            return "🖼️ 当前模型不支持图片输入，我先改用附件路径和摘要继续。"
+        return "🖼️ The active model does not support image input. I’ll retry with attachment paths and summaries."
     if kind == "status":
         normalized = text.strip()
         if normalized == "Auto-compacting conversation memory to keep things fast and focused.":
@@ -670,6 +719,60 @@ def _build_inbound_user_message(message: InboundMessage) -> ConversationMessage:
             logger.exception("ohmo runtime failed to encode image attachment path=%s", media_path)
 
     return ConversationMessage.from_user_content(content)
+
+
+def _should_retry_without_image_input(error_message: str, messages: list[ConversationMessage]) -> bool:
+    """Return True when a provider rejects image input and history contains images."""
+    if not _history_has_image_blocks(messages):
+        return False
+    normalized = error_message.lower()
+    image_signal = any(
+        phrase in normalized
+        for phrase in (
+            "image input",
+            "image_url",
+            "multimodal",
+            "vision",
+            "image content",
+        )
+    )
+    rejection_signal = any(
+        phrase in normalized
+        for phrase in (
+            "no endpoints found",
+            "not support",
+            "does not support",
+            "unsupported",
+            "cannot support",
+            "can't support",
+        )
+    )
+    return image_signal and rejection_signal
+
+
+def _history_has_image_blocks(messages: list[ConversationMessage]) -> bool:
+    return any(any(isinstance(block, ImageBlock) for block in message.content) for message in messages)
+
+
+def _strip_image_blocks_from_engine_history(engine) -> None:
+    messages = _strip_image_blocks_from_messages(list(engine.messages))
+    if hasattr(engine, "load_messages"):
+        engine.load_messages(messages)
+    else:
+        engine.messages = messages
+
+
+def _strip_image_blocks_from_messages(messages: list[ConversationMessage]) -> list[ConversationMessage]:
+    return [_strip_image_blocks_from_message(message) for message in messages]
+
+
+def _strip_image_blocks_from_message(message: ConversationMessage) -> ConversationMessage:
+    if not any(isinstance(block, ImageBlock) for block in message.content):
+        return message
+    content = [block for block in message.content if not isinstance(block, ImageBlock)]
+    if not any(isinstance(block, TextBlock) for block in content):
+        content.append(TextBlock(text=_IMAGE_FALLBACK_NOTE))
+    return message.model_copy(update={"content": content})
 
 
 def _build_speaker_context(message: InboundMessage) -> str:
