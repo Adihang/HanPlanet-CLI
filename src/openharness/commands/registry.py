@@ -37,6 +37,7 @@ from openharness.engine.messages import ConversationMessage, sanitize_conversati
 from openharness.engine.query_engine import QueryEngine
 from openharness.memory import (
     add_memory_entry,
+    get_memory_entrypoint,
     get_project_memory_dir,
     list_memory_files,
     remove_memory_entry,

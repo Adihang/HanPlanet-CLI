@@ -325,7 +325,8 @@ def test_openai_client_init_passes_timeout(monkeypatch):
 def test_openai_client_uses_bearer_authorization_header():
     client = OpenAICompatibleClient(api_key="test-key", base_url="https://example.com/v1")
 
-    assert client._client.default_headers["Authorization"] == "Bearer test-key"
+    auth = client._client.auth_headers.get("Authorization") or client._client.default_headers.get("Authorization")
+    assert auth == "Bearer test-key"
 
 
 
