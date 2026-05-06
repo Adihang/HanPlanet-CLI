@@ -235,7 +235,7 @@ def start_gateway_process(cwd: str | Path | None = None, workspace: str | Path |
                 service._cwd,
                 "--workspace",
                 str(get_workspace_root(workspace)),
-            ],
+            ),
             **popen_kwargs,
         )
     return process.pid

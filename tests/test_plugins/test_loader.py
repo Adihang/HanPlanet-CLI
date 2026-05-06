@@ -9,7 +9,7 @@ from pathlib import Path
 from openharness.config.settings import Settings
 from openharness.hooks.loader import load_hook_registry
 from openharness.plugins import load_plugins
-from openharness.plugins.loader import get_user_plugins_dir
+from openharness.plugins.loader import get_project_plugins_dir, get_user_plugins_dir
 from openharness.skills import load_skill_registry
 
 
@@ -185,8 +185,7 @@ def test_user_plugins_still_load_when_project_plugins_are_disabled(tmp_path: Pat
 def test_enabled_plugin_tools_are_loaded(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     project = tmp_path / "repo"
-    plugins_root = project / ".openharness" / "plugins"
-    plugins_root.mkdir(parents=True)
+    plugins_root = get_project_plugins_dir(project)
     _write_tool_plugin(plugins_root, enabled_by_default=True)
 
     plugins = load_plugins(Settings(allow_project_plugins=True), project)
@@ -200,8 +199,7 @@ def test_enabled_plugin_tools_are_loaded(tmp_path: Path, monkeypatch):
 def test_disabled_plugin_tools_are_not_imported(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     project = tmp_path / "repo"
-    plugins_root = project / ".openharness" / "plugins"
-    plugins_root.mkdir(parents=True)
+    plugins_root = get_project_plugins_dir(project)
     plugin_dir = _write_tool_plugin(plugins_root, enabled_by_default=False)
     marker = tmp_path / "tool-imported.txt"
     tool_file = plugin_dir / "tools" / "echo_tool.py"

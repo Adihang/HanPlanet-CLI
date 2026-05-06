@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from openharness.plugins.loader import get_project_plugins_dir
 from openharness.ui.runtime import build_runtime, close_runtime
 
 
@@ -50,8 +51,7 @@ def _write_tool_plugin(plugins_root: Path) -> None:
 async def test_build_runtime_registers_enabled_plugin_tools(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     project = tmp_path / "repo"
-    plugins_root = project / ".openharness" / "plugins"
-    plugins_root.mkdir(parents=True)
+    plugins_root = get_project_plugins_dir(project)
     _write_tool_plugin(plugins_root)
 
     from openharness.config.settings import Settings
