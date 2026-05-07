@@ -310,6 +310,7 @@ class OpenAICompatibleClient:
         params.update(_token_limit_param_for_model(request.model, request.max_tokens))
         if openai_tools:
             params["tools"] = openai_tools
+            params["tool_choice"] = "auto"
             # Some providers (Kimi) error on empty reasoning_content in
             # tool-call follow-ups.  Omit the entire stream_options key if
             # tools are present – avoids triggering model-side thinking mode
