@@ -85,6 +85,9 @@ jobs:
     name: Deploy to HDD
     needs: build
     runs-on: self-hosted
+    timeout-minutes: 15
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: false
 
     steps:
       - name: Compute artifact timestamp
